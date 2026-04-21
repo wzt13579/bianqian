@@ -1,0 +1,37 @@
+name: mi_notes_flutter
+description: "MiCode Notes - Flutter rewrite (Android + Windows)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # State management
+  provider: ^6.1.2
+
+  # Local SQLite
+  sqflite: ^2.3.3+1
+  sqflite_common_ffi: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+
+  # Local notifications (reminder)
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
+
+  # i18n / formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

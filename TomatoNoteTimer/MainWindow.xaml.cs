@@ -4,7 +4,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Media;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -24,7 +23,6 @@ using Color = System.Windows.Media.Color;
 using FontFamily = System.Windows.Media.FontFamily;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaPoint = System.Windows.Point;
-using MsOpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using WpfApplication = System.Windows.Application;
 using WpfMessageBox = System.Windows.MessageBox;
 
@@ -34,7 +32,6 @@ public partial class MainWindow : Window
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "TomatoNoteTimer";
-    private const string DefaultPresetAudioFileName = "音乐预设.mp3";
     private const string DefaultIconFileName = "icon.ico";
     private const string DefaultNoteText = "人生若只如初见，何事秋风悲画扇";
     private const string RepositoryUrl = "https://github.com/xiaoshengyvlin/Zako-Pomodoro-timer";
@@ -44,18 +41,18 @@ public partial class MainWindow : Window
     private const uint ModControl = 0x0002;
     private const uint ModShift = 0x0004;
     private const uint ModWin = 0x0008;
-    private static readonly int[] QuickPresetMinutes = { 1, 5, 10, 15, 25, 30 };
-    private static readonly HotkeyAction[] SupportedHotkeyActions =
-    {
-        HotkeyAction.StartTimer,
-        HotkeyAction.PauseTimer,
-        HotkeyAction.ResetTimer,
-        HotkeyAction.ToggleSimpleMode,
-        HotkeyAction.ToggleTopMost,
-        HotkeyAction.ToggleFixedMode
-    };
     private const long MemoryTrimWorkingSetThresholdBytes = 45L * 1024 * 1024;
     private const long MemoryTrimPrivateThresholdBytes = 130L * 1024 * 1024;
+
+    private static readonly HotkeyAction[] SupportedHotkeyActions =
+    {
+        HotkeyAction.ToggleTopMost,
+        HotkeyAction.ToggleFixedMode,
+        HotkeyAction.ToggleVisibility,
+        HotkeyAction.NextNote,
+        HotkeyAction.PrevNote
+    };
+
     [DllImport("psapi.dll", SetLastError = true)]
     private static extern bool EmptyWorkingSet(IntPtr hProcess);
     [DllImport("user32.dll", SetLastError = true)]
@@ -63,61 +60,29 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    private enum TimerPhase
-    {
-        Work,
-        Rest
-    }
-
     private enum HotkeyAction
     {
-        StartTimer = 1,
-        PauseTimer = 2,
-        ResetTimer = 3,
-        ToggleSimpleMode = 4,
-        ToggleTopMost = 5,
-        ToggleFixedMode = 6
+        ToggleTopMost = 1,
+        ToggleFixedMode = 2,
+        ToggleVisibility = 3,
+        NextNote = 4,
+        PrevNote = 5
     }
 
-    private readonly DispatcherTimer _countdownTimer;
     private readonly DispatcherTimer _noteRotationTimer;
     private readonly DispatcherTimer _memoryGuardTimer;
-    private MediaPlayer? _loopPlayer;
-    private MediaPlayer? _endPlayer;
     private readonly ConfigService _configService;
 
     private AppState _state;
     private WinForms.NotifyIcon? _notifyIcon;
-    private WinForms.ContextMenuStrip? _leftPresetMenu;
     private Drawing.Icon? _trayIcon;
-    private bool _isRunning;
     private bool _isExiting;
-    private bool _loopSourceLoaded;
-    private string _activeLoopPath = string.Empty;
-    private int _remainingSeconds;
-
-    private List<TimerPhase> _phaseSequence = new();
-    private TimerPhase _currentPhase = TimerPhase.Work;
-    private int _phaseIndexInCycle;
-    private int _currentCycle = 1;
-    private int _totalCycles = 1;
-    private bool _sessionChainActive;
 
     private WinForms.ToolStripMenuItem? _topMostItem;
     private WinForms.ToolStripMenuItem? _fixedModeItem;
     private WinForms.ToolStripMenuItem? _rotationEnabledItem;
-    private WinForms.ToolStripMenuItem? _webOpenEnabledItem;
     private WinForms.ToolStripMenuItem? _autoStartItem;
     private WinForms.ToolStripMenuItem? _minimizeToTrayItem;
-    private WinForms.ToolStripMenuItem? _loopAudioItem;
-    private WinForms.ToolStripMenuItem? _endAudioItem;
-    private WinForms.ToolStripMenuItem? _restEndAudioItem;
-    private WinForms.ToolStripMenuItem? _loopAudioEnabledItem;
-    private WinForms.ToolStripMenuItem? _workEndAudioEnabledItem;
-    private WinForms.ToolStripMenuItem? _restEndAudioEnabledItem;
-    private WinForms.ToolStripMenuItem? _workSessionEnabledItem;
-    private WinForms.ToolStripMenuItem? _restSessionEnabledItem;
-    private WinForms.ToolStripMenuItem? _simpleModeItem;
     private readonly Dictionary<string, WinForms.ToolStripMenuItem> _backgroundModeItems = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, HotkeyAction> _registeredHotkeys = new();
     private double _lastAppliedTransparencyPercent = -1;
@@ -126,7 +91,6 @@ public partial class MainWindow : Window
     private bool _noteRotationRunningBeforeSuspend;
     private DateTime _lastMemoryTrimUtc = DateTime.MinValue;
     private bool _memoryPressureMode;
-    private bool _isEndAudioPlaying;
     private IntPtr _windowHandle;
     private HwndSource? _windowSource;
 
@@ -137,14 +101,6 @@ public partial class MainWindow : Window
 
         _configService = new ConfigService(AppContext.BaseDirectory);
         _state = _configService.Load();
-        InitializeWorkflowStateFromConfig();
-        EnsureDefaultEndAudioPaths();
-
-        _countdownTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(1)
-        };
-        _countdownTimer.Tick += CountdownTimer_Tick;
 
         _noteRotationTimer = new DispatcherTimer();
         _noteRotationTimer.Tick += NoteRotationTimer_Tick;
@@ -165,238 +121,10 @@ public partial class MainWindow : Window
         _configService.AppendLog("应用启动");
     }
 
-    private void InitializeWorkflowStateFromConfig()
-    {
-        _phaseSequence = BuildPhaseSequence();
-        _totalCycles = Math.Clamp(_state.Timer.LoopCount, 1, 99);
-        _sessionChainActive = _state.Runtime.SessionChainActive;
-
-        _currentPhase = ParsePhase(_state.Runtime.CurrentPhase, _phaseSequence[0]);
-        _phaseIndexInCycle = _phaseSequence.FindIndex(x => x == _currentPhase);
-        if (_phaseIndexInCycle < 0)
-        {
-            _phaseIndexInCycle = 0;
-            _currentPhase = _phaseSequence[0];
-        }
-
-        int runtimeTotal = Math.Clamp(_state.Runtime.TotalCycles, 1, 99);
-        _totalCycles = _sessionChainActive ? runtimeTotal : _totalCycles;
-        _currentCycle = Math.Clamp(_state.Runtime.CurrentCycle, 1, _totalCycles);
-
-        if (!_sessionChainActive)
-        {
-            _currentCycle = 1;
-            _phaseIndexInCycle = 0;
-            _currentPhase = _phaseSequence[0];
-        }
-
-        int defaultSeconds = GetDurationForPhase(_currentPhase);
-        _remainingSeconds = _state.Runtime.RemainingSeconds > 0
-            ? _state.Runtime.RemainingSeconds
-            : defaultSeconds;
-
-        if (_remainingSeconds < 0)
-        {
-            _remainingSeconds = defaultSeconds;
-        }
-
-        _state.Timer.DurationSeconds = _state.Timer.WorkDurationSeconds;
-        _state.Timer.DurationMinutes = Math.Max(1, _state.Timer.WorkDurationSeconds / 60);
-    }
-
-    private List<TimerPhase> BuildPhaseSequence()
-    {
-        var sequence = new List<TimerPhase>();
-        if (_state.Timer.EnableWorkSession)
-        {
-            sequence.Add(TimerPhase.Work);
-        }
-
-        if (_state.Timer.EnableRestSession)
-        {
-            sequence.Add(TimerPhase.Rest);
-        }
-
-        if (sequence.Count == 0)
-        {
-            _state.Timer.EnableWorkSession = true;
-            sequence.Add(TimerPhase.Work);
-        }
-
-        return sequence;
-    }
-
-    private static TimerPhase ParsePhase(string? raw, TimerPhase fallback)
-    {
-        return raw?.Trim().ToLowerInvariant() switch
-        {
-            "work" => TimerPhase.Work,
-            "rest" => TimerPhase.Rest,
-            _ => fallback
-        };
-    }
-
-    private int GetDurationForPhase(TimerPhase phase)
-    {
-        return phase == TimerPhase.Work
-            ? Math.Max(1, _state.Timer.WorkDurationSeconds)
-            : Math.Max(1, _state.Timer.RestDurationSeconds);
-    }
-
-    private static string GetPhaseText(TimerPhase phase)
-    {
-        return phase == TimerPhase.Work ? "工作时间" : "休息时间";
-    }
-
-    private void EnsureDefaultEndAudioPaths()
-    {
-        string defaultPath = EnsurePresetAudioFile();
-        if (string.IsNullOrWhiteSpace(defaultPath) || !File.Exists(defaultPath))
-        {
-            return;
-        }
-
-        bool changed = false;
-        bool originalUseCustomWork = _state.Timer.UseCustomEndAudio;
-        bool originalUseCustomRest = _state.Timer.UseCustomRestEndAudio;
-        _state.Timer.EndAudioPath = ResolveAudioPath(_state.Timer.EndAudioPath, defaultPath, ref changed, out bool useCustomWork);
-        _state.Timer.UseCustomEndAudio = useCustomWork;
-
-        _state.Timer.RestEndAudioPath = ResolveAudioPath(_state.Timer.RestEndAudioPath, defaultPath, ref changed, out bool useCustomRest);
-        _state.Timer.UseCustomRestEndAudio = useCustomRest;
-
-        if (originalUseCustomWork != _state.Timer.UseCustomEndAudio ||
-            originalUseCustomRest != _state.Timer.UseCustomRestEndAudio)
-        {
-            changed = true;
-        }
-
-        if (changed)
-        {
-            _configService.Save(_state);
-        }
-    }
-
-    private string ResolveAudioPath(string configuredPath, string defaultPath, ref bool changed, out bool useCustom)
-    {
-        string normalizedConfigured = configuredPath?.Trim() ?? string.Empty;
-        if (string.Equals(normalizedConfigured, DefaultPresetAudioFileName, StringComparison.OrdinalIgnoreCase))
-        {
-            useCustom = false;
-            if (!IsPathMatch(normalizedConfigured, defaultPath))
-            {
-                changed = true;
-            }
-            return defaultPath;
-        }
-
-        string resolved = ResolveConfiguredAudioPath(normalizedConfigured);
-        string legacyDefaultPath = Path.Combine(AppContext.BaseDirectory, DefaultPresetAudioFileName);
-        if (!string.IsNullOrWhiteSpace(resolved) &&
-            File.Exists(resolved) &&
-            IsPathMatch(resolved, legacyDefaultPath))
-        {
-            useCustom = false;
-            if (!IsPathMatch(resolved, defaultPath))
-            {
-                changed = true;
-            }
-            return defaultPath;
-        }
-
-        if (string.IsNullOrWhiteSpace(resolved) || !File.Exists(resolved))
-        {
-            useCustom = false;
-            if (!IsPathMatch(normalizedConfigured, defaultPath))
-            {
-                changed = true;
-            }
-            return defaultPath;
-        }
-
-        useCustom = !IsPathMatch(resolved, defaultPath);
-        if (!string.Equals(configuredPath, resolved, StringComparison.OrdinalIgnoreCase))
-        {
-            changed = true;
-        }
-
-        return resolved;
-    }
-
-    private static string ResolveConfiguredAudioPath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return string.Empty;
-        }
-
-        if (Path.IsPathRooted(path))
-        {
-            return path;
-        }
-
-        string candidate = Path.Combine(AppContext.BaseDirectory, path);
-        return File.Exists(candidate) ? candidate : path;
-    }
-
-    private string EnsurePresetAudioFile()
-    {
-        string outputDirectory = Path.Combine(_configService.AudioDirectory, "countdown_end");
-        Directory.CreateDirectory(outputDirectory);
-
-        string outputPath = Path.Combine(outputDirectory, DefaultPresetAudioFileName);
-        if (File.Exists(outputPath))
-        {
-            return outputPath;
-        }
-
-        Stream? stream = TryOpenEmbeddedResource(DefaultPresetAudioFileName);
-        if (stream is null)
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            using (stream)
-            using (var file = File.Create(outputPath))
-            {
-                stream.CopyTo(file);
-            }
-            return outputPath;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _configService.AppendLog($"写入默认音频失败: {ex.Message}");
-            return string.Empty;
-        }
-        catch (IOException ex)
-        {
-            _configService.AppendLog($"写入默认音频失败: {ex.Message}");
-            return string.Empty;
-        }
-    }
-
-    private static Stream? TryOpenEmbeddedResource(string fileName)
-    {
-        string? resourceName = typeof(MainWindow)
-            .Assembly
-            .GetManifestResourceNames()
-            .FirstOrDefault(x => x.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
-
-        if (string.IsNullOrWhiteSpace(resourceName))
-        {
-            return null;
-        }
-
-        return typeof(MainWindow).Assembly.GetManifestResourceStream(resourceName);
-    }
-
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyVisualEffects();
         ApplyResponsiveLayout();
-        UpdateCountdownText();
         UpdateNotesText();
         Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(TrimMemoryUsage));
     }
@@ -456,7 +184,7 @@ public partial class MainWindow : Window
             e.Cancel = true;
             Hide();
             SuspendWindowForTray();
-            _notifyIcon?.ShowBalloonTip(1200, "番茄钟便签", "已最小化到托盘。", WinForms.ToolTipIcon.Info);
+            _notifyIcon?.ShowBalloonTip(1200, "便签", "已最小化到托盘。", WinForms.ToolTipIcon.Info);
             return;
         }
 
@@ -467,7 +195,7 @@ public partial class MainWindow : Window
             _windowSource = null;
         }
 
-        PersistRuntimeState();
+        SaveState();
         DisposeTrayIcon();
     }
 
@@ -478,10 +206,9 @@ public partial class MainWindow : Window
 
         _notifyIcon.Icon = _trayIcon;
         _notifyIcon.Visible = true;
-        _notifyIcon.Text = "番茄钟便签";
+        _notifyIcon.Text = "便签";
         _notifyIcon.MouseUp += NotifyIcon_MouseUp;
         _notifyIcon.ContextMenuStrip = BuildTrayMenu();
-        _leftPresetMenu = BuildLeftPresetMenu();
     }
 
     private void NotifyIcon_MouseUp(object? sender, WinForms.MouseEventArgs e)
@@ -491,30 +218,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        DispatchToUi(ShowLeftPresetMenu);
-    }
-
-    private void ShowLeftPresetMenu()
-    {
-        if (_leftPresetMenu is null)
-        {
-            return;
-        }
-
-        _leftPresetMenu.Show(WinForms.Cursor.Position);
-    }
-
-    private WinForms.ContextMenuStrip BuildLeftPresetMenu()
-    {
-        var menu = new WinForms.ContextMenuStrip();
-        foreach (int minutes in QuickPresetMinutes)
-        {
-            menu.Items.Add(CreateMenuItem($"{minutes} 分钟（设置并开始）", () => ApplyWorkPreset(minutes, startImmediately: true)));
-        }
-
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add(CreateMenuItem("显示/隐藏窗口", ToggleWindowVisibility));
-        return menu;
+        DispatchToUi(ToggleWindowVisibility);
     }
 
     private WinForms.ContextMenuStrip BuildTrayMenu()
@@ -522,72 +226,27 @@ public partial class MainWindow : Window
         var menu = new WinForms.ContextMenuStrip();
 
         menu.Items.Add(CreateMenuItem("显示/隐藏窗口", ToggleWindowVisibility));
-        menu.Items.Add(CreateMenuItem("开始倒计时", StartTimer));
-        menu.Items.Add(CreateMenuItem("暂停倒计时", PauseTimer));
-        menu.Items.Add(CreateMenuItem("重置倒计时", ResetTimer));
         menu.Items.Add(new WinForms.ToolStripSeparator());
-
-        var timerPlanMenu = new WinForms.ToolStripMenuItem("时间与循环");
-        timerPlanMenu.DropDownItems.Add(CreateMenuItem("设置工作时间（时:分:秒）", ConfigureWorkDuration));
-        timerPlanMenu.DropDownItems.Add(CreateMenuItem("设置休息时间（时:分:秒）", ConfigureRestDuration));
-        timerPlanMenu.DropDownItems.Add(CreateMenuItem("设置循环次数", ConfigureLoopCount));
-        _workSessionEnabledItem = CreateCheckMenuItem("启用工作时间", _state.Timer.EnableWorkSession, ToggleWorkSession);
-        _restSessionEnabledItem = CreateCheckMenuItem("启用休息时间", _state.Timer.EnableRestSession, ToggleRestSession);
-        timerPlanMenu.DropDownItems.Add(_workSessionEnabledItem);
-        timerPlanMenu.DropDownItems.Add(_restSessionEnabledItem);
-        timerPlanMenu.DropDownItems.Add(new WinForms.ToolStripSeparator());
-        foreach (int minutes in QuickPresetMinutes)
-        {
-            timerPlanMenu.DropDownItems.Add(CreateMenuItem($"工作预设 {minutes} 分钟", () => ApplyWorkPreset(minutes, startImmediately: false)));
-        }
-        menu.Items.Add(timerPlanMenu);
-
-        var timerAudioMenu = new WinForms.ToolStripMenuItem("音频设置");
-        _loopAudioEnabledItem = CreateCheckMenuItem("启用过程音频", _state.Timer.UseLoopAudio, ToggleLoopAudioEnabled);
-        _workEndAudioEnabledItem = CreateCheckMenuItem("启用工作结束音频", _state.Timer.EnableWorkEndAudio, ToggleWorkEndAudioEnabled);
-        _restEndAudioEnabledItem = CreateCheckMenuItem("启用休息结束音频", _state.Timer.EnableRestEndAudio, ToggleRestEndAudioEnabled);
-        _loopAudioItem = CreateStateMenuItem("选择过程音频", SelectLoopAudio);
-        _endAudioItem = CreateStateMenuItem("选择工作结束音频", SelectWorkEndAudio);
-        _restEndAudioItem = CreateStateMenuItem("选择休息结束音频", SelectRestEndAudio);
-        timerAudioMenu.DropDownItems.Add(_loopAudioEnabledItem);
-        timerAudioMenu.DropDownItems.Add(_workEndAudioEnabledItem);
-        timerAudioMenu.DropDownItems.Add(_restEndAudioEnabledItem);
-        timerAudioMenu.DropDownItems.Add(new WinForms.ToolStripSeparator());
-        timerAudioMenu.DropDownItems.Add(_loopAudioItem);
-        timerAudioMenu.DropDownItems.Add(_endAudioItem);
-        timerAudioMenu.DropDownItems.Add(_restEndAudioItem);
-        timerAudioMenu.DropDownItems.Add(new WinForms.ToolStripSeparator());
-        timerAudioMenu.DropDownItems.Add(CreateMenuItem("取消过程音频", CancelLoopAudio));
-        timerAudioMenu.DropDownItems.Add(CreateMenuItem("取消工作结束音频", CancelWorkEndAudio));
-        timerAudioMenu.DropDownItems.Add(CreateMenuItem("取消休息结束音频", CancelRestEndAudio));
-        menu.Items.Add(timerAudioMenu);
 
         var notesMenu = new WinForms.ToolStripMenuItem("便签设置");
         notesMenu.DropDownItems.Add(CreateMenuItem("编辑便签段落", EditNotes));
+        notesMenu.DropDownItems.Add(CreateMenuItem("上一段便签", ShowPreviousNote));
+        notesMenu.DropDownItems.Add(CreateMenuItem("下一段便签", ShowNextNote));
+        notesMenu.DropDownItems.Add(new WinForms.ToolStripSeparator());
         _rotationEnabledItem = CreateCheckMenuItem("启用便签定时切换", _state.Notes.EnableRotation, ToggleNoteRotation);
         notesMenu.DropDownItems.Add(_rotationEnabledItem);
         notesMenu.DropDownItems.Add(CreateMenuItem("设置便签切换秒数", ConfigureRotationSeconds));
+        notesMenu.DropDownItems.Add(new WinForms.ToolStripSeparator());
         notesMenu.DropDownItems.Add(CreateMenuItem("设置便签字体", ConfigureNoteFont));
         notesMenu.DropDownItems.Add(CreateMenuItem("设置便签字号", ConfigureNoteFontSize));
         notesMenu.DropDownItems.Add(CreateMenuItem("设置便签文字颜色", ConfigureNotesTextColor));
         menu.Items.Add(notesMenu);
 
         var appearanceMenu = new WinForms.ToolStripMenuItem("外观设置");
-        _simpleModeItem = CreateCheckMenuItem("简洁模式（仅倒计时）", _state.App.SimpleMode, ToggleSimpleMode);
-        appearanceMenu.DropDownItems.Add(_simpleModeItem);
-        appearanceMenu.DropDownItems.Add(CreateMenuItem("设置倒计时字体", ConfigureCountdownFont));
-        appearanceMenu.DropDownItems.Add(CreateMenuItem("设置倒计时字号", ConfigureCountdownFontSize));
-        appearanceMenu.DropDownItems.Add(CreateMenuItem("设置倒计时颜色", ConfigureCountdownTextColor));
         appearanceMenu.DropDownItems.Add(CreateMenuItem("设置背景颜色", ConfigureBackgroundColor));
         menu.Items.Add(appearanceMenu);
         menu.Items.Add(BuildBackgroundEffectMenu());
         menu.Items.Add(BuildTransparencyMenu());
-
-        var webMenu = new WinForms.ToolStripMenuItem("网页任务");
-        webMenu.DropDownItems.Add(CreateMenuItem("设置定时打开网页URL", ConfigureWebUrl));
-        _webOpenEnabledItem = CreateCheckMenuItem("工作倒计时结束打开网页", _state.WebTask.EnableOnTimerComplete, ToggleWebOpenOnComplete);
-        webMenu.DropDownItems.Add(_webOpenEnabledItem);
-        menu.Items.Add(webMenu);
 
         var systemMenu = new WinForms.ToolStripMenuItem("系统设置");
         _topMostItem = CreateCheckMenuItem("窗口置顶", _state.App.TopMost, ToggleTopMost);
@@ -599,45 +258,15 @@ public partial class MainWindow : Window
         systemMenu.DropDownItems.Add(_autoStartItem);
         systemMenu.DropDownItems.Add(_minimizeToTrayItem);
         menu.Items.Add(systemMenu);
-        menu.Items.Add(BuildHotkeyMenu());
+        menu.Items.Add(CreateMenuItem("快捷键设置", OpenHotkeySettingsDialog));
 
         menu.Items.Add(CreateMenuItem("github仓库", OpenGithubRepository));
         menu.Items.Add(CreateMenuItem("打开配置目录", OpenConfigDirectory));
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add(CreateMenuItem("退出程序", ExitApplication));
 
-        UpdateAudioMenuChecks();
-        UpdateTimerModeChecks();
         UpdateBackgroundEffectChecks();
         return menu;
-    }
-
-    private WinForms.ToolStripMenuItem BuildQuickPresetMenu(string title, bool startImmediately)
-    {
-        var menu = new WinForms.ToolStripMenuItem(title);
-        foreach (int minutes in QuickPresetMinutes)
-        {
-            menu.DropDownItems.Add(CreateMenuItem($"{minutes} 分钟", () => ApplyWorkPreset(minutes, startImmediately)));
-        }
-        return menu;
-    }
-
-    private void ApplyWorkPreset(int minutes, bool startImmediately)
-    {
-        int seconds = Math.Max(1, minutes * 60);
-        _state.Timer.WorkDurationSeconds = seconds;
-        _state.Timer.DurationSeconds = seconds;
-        _state.Timer.DurationMinutes = Math.Max(1, seconds / 60);
-        _state.Timer.EnableWorkSession = true;
-        UpdateTimerModeChecks();
-
-        ResetTimer();
-        SaveState();
-
-        if (startImmediately)
-        {
-            StartTimer();
-        }
     }
 
     private WinForms.ToolStripMenuItem BuildTransparencyMenu()
@@ -714,96 +343,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateAudioMenuChecks()
-    {
-        if (_loopAudioEnabledItem is not null && _loopAudioEnabledItem.Checked != _state.Timer.UseLoopAudio)
-        {
-            SetMenuChecked(_loopAudioEnabledItem, _state.Timer.UseLoopAudio);
-        }
-
-        if (_workEndAudioEnabledItem is not null && _workEndAudioEnabledItem.Checked != _state.Timer.EnableWorkEndAudio)
-        {
-            SetMenuChecked(_workEndAudioEnabledItem, _state.Timer.EnableWorkEndAudio);
-        }
-
-        if (_restEndAudioEnabledItem is not null && _restEndAudioEnabledItem.Checked != _state.Timer.EnableRestEndAudio)
-        {
-            SetMenuChecked(_restEndAudioEnabledItem, _state.Timer.EnableRestEndAudio);
-        }
-
-        if (_loopAudioItem is not null)
-        {
-            _loopAudioItem.Checked = !string.IsNullOrWhiteSpace(_state.Timer.LoopAudioPath) &&
-                                     File.Exists(_state.Timer.LoopAudioPath);
-        }
-
-        if (_endAudioItem is not null)
-        {
-            _endAudioItem.Checked = _state.Timer.UseCustomEndAudio &&
-                                     !string.IsNullOrWhiteSpace(_state.Timer.EndAudioPath) &&
-                                     File.Exists(_state.Timer.EndAudioPath);
-        }
-
-        if (_restEndAudioItem is not null)
-        {
-            _restEndAudioItem.Checked = _state.Timer.UseCustomRestEndAudio &&
-                                        !string.IsNullOrWhiteSpace(_state.Timer.RestEndAudioPath) &&
-                                        File.Exists(_state.Timer.RestEndAudioPath);
-        }
-    }
-
-    private void UpdateTimerModeChecks()
-    {
-        if (_workSessionEnabledItem is not null && _workSessionEnabledItem.Checked != _state.Timer.EnableWorkSession)
-        {
-            SetMenuChecked(_workSessionEnabledItem, _state.Timer.EnableWorkSession);
-        }
-
-        if (_restSessionEnabledItem is not null && _restSessionEnabledItem.Checked != _state.Timer.EnableRestSession)
-        {
-            SetMenuChecked(_restSessionEnabledItem, _state.Timer.EnableRestSession);
-        }
-    }
-
-    private WinForms.ToolStripMenuItem BuildFontSizeMenu()
-    {
-        var menu = new WinForms.ToolStripMenuItem("便签字号");
-        var sizes = new[] { 12.0, 16.0, 20.0, 24.0, 28.0, 32.0 };
-
-        foreach (double size in sizes)
-        {
-            var item = new WinForms.ToolStripMenuItem(size.ToString("0"))
-            {
-                CheckOnClick = true,
-                Checked = Math.Abs(_state.Notes.FontSize - size) < 0.01
-            };
-
-            item.Click += (_, _) =>
-            {
-                foreach (WinForms.ToolStripItem child in menu.DropDownItems)
-                {
-                    if (child is WinForms.ToolStripMenuItem menuItem)
-                    {
-                        menuItem.Checked = ReferenceEquals(menuItem, item);
-                    }
-                }
-
-                _state.Notes.FontSize = size;
-                UpdateNotesText();
-                SaveState();
-            };
-
-            menu.DropDownItems.Add(item);
-        }
-
-        return menu;
-    }
-
-    private WinForms.ToolStripMenuItem BuildHotkeyMenu()
-    {
-        return CreateMenuItem("快捷键设置", OpenHotkeySettingsDialog);
-    }
-
     private void OpenHotkeySettingsDialog()
     {
         var dialog = new HotkeySettingsDialog(CloneHotkeySettings(_state.App.Hotkeys));
@@ -842,12 +381,11 @@ public partial class MainWindow : Window
         source ??= new HotkeySettings();
         return new HotkeySettings
         {
-            StartTimer = source.StartTimer,
-            PauseTimer = source.PauseTimer,
-            ResetTimer = source.ResetTimer,
-            ToggleSimpleMode = source.ToggleSimpleMode,
             ToggleTopMost = source.ToggleTopMost,
-            ToggleFixedMode = source.ToggleFixedMode
+            ToggleFixedMode = source.ToggleFixedMode,
+            ToggleVisibility = source.ToggleVisibility,
+            NextNote = source.NextNote,
+            PrevNote = source.PrevNote
         };
     }
 
@@ -959,25 +497,6 @@ public partial class MainWindow : Window
     {
         switch (action)
         {
-            case HotkeyAction.StartTimer:
-                StartTimer();
-                break;
-            case HotkeyAction.PauseTimer:
-                PauseTimer();
-                break;
-            case HotkeyAction.ResetTimer:
-                ResetTimer();
-                break;
-            case HotkeyAction.ToggleSimpleMode:
-            {
-                bool enabled = !_state.App.SimpleMode;
-                ToggleSimpleMode(enabled);
-                if (_simpleModeItem is not null)
-                {
-                    SetMenuChecked(_simpleModeItem, enabled);
-                }
-                break;
-            }
             case HotkeyAction.ToggleTopMost:
             {
                 bool enabled = !_state.App.TopMost;
@@ -998,6 +517,15 @@ public partial class MainWindow : Window
                 }
                 break;
             }
+            case HotkeyAction.ToggleVisibility:
+                ToggleWindowVisibility();
+                break;
+            case HotkeyAction.NextNote:
+                ShowNextNote();
+                break;
+            case HotkeyAction.PrevNote:
+                ShowPreviousNote();
+                break;
         }
 
         _configService.AppendLog($"快捷键触发: {GetHotkeyActionTitle(action)}");
@@ -1270,43 +798,15 @@ public partial class MainWindow : Window
         return string.Join("+", parts);
     }
 
-    private bool IsHotkeyConflict(HotkeyAction action, string candidate, out string conflictAction)
-    {
-        foreach (HotkeyAction other in SupportedHotkeyActions)
-        {
-            if (other == action)
-            {
-                continue;
-            }
-
-            string value = GetConfiguredHotkey(other);
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                continue;
-            }
-
-            if (TryParseHotkey(value, out _, out _, out string normalized, out _) &&
-                string.Equals(normalized, candidate, StringComparison.OrdinalIgnoreCase))
-            {
-                conflictAction = GetHotkeyActionTitle(other);
-                return true;
-            }
-        }
-
-        conflictAction = string.Empty;
-        return false;
-    }
-
     private string GetConfiguredHotkey(HotkeyAction action)
     {
         return action switch
         {
-            HotkeyAction.StartTimer => _state.App.Hotkeys.StartTimer,
-            HotkeyAction.PauseTimer => _state.App.Hotkeys.PauseTimer,
-            HotkeyAction.ResetTimer => _state.App.Hotkeys.ResetTimer,
-            HotkeyAction.ToggleSimpleMode => _state.App.Hotkeys.ToggleSimpleMode,
             HotkeyAction.ToggleTopMost => _state.App.Hotkeys.ToggleTopMost,
             HotkeyAction.ToggleFixedMode => _state.App.Hotkeys.ToggleFixedMode,
+            HotkeyAction.ToggleVisibility => _state.App.Hotkeys.ToggleVisibility,
+            HotkeyAction.NextNote => _state.App.Hotkeys.NextNote,
+            HotkeyAction.PrevNote => _state.App.Hotkeys.PrevNote,
             _ => string.Empty
         };
     }
@@ -1316,23 +816,20 @@ public partial class MainWindow : Window
         string normalized = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
         switch (action)
         {
-            case HotkeyAction.StartTimer:
-                _state.App.Hotkeys.StartTimer = normalized;
-                break;
-            case HotkeyAction.PauseTimer:
-                _state.App.Hotkeys.PauseTimer = normalized;
-                break;
-            case HotkeyAction.ResetTimer:
-                _state.App.Hotkeys.ResetTimer = normalized;
-                break;
-            case HotkeyAction.ToggleSimpleMode:
-                _state.App.Hotkeys.ToggleSimpleMode = normalized;
-                break;
             case HotkeyAction.ToggleTopMost:
                 _state.App.Hotkeys.ToggleTopMost = normalized;
                 break;
             case HotkeyAction.ToggleFixedMode:
                 _state.App.Hotkeys.ToggleFixedMode = normalized;
+                break;
+            case HotkeyAction.ToggleVisibility:
+                _state.App.Hotkeys.ToggleVisibility = normalized;
+                break;
+            case HotkeyAction.NextNote:
+                _state.App.Hotkeys.NextNote = normalized;
+                break;
+            case HotkeyAction.PrevNote:
+                _state.App.Hotkeys.PrevNote = normalized;
                 break;
         }
     }
@@ -1341,12 +838,11 @@ public partial class MainWindow : Window
     {
         return action switch
         {
-            HotkeyAction.StartTimer => "开启倒计时",
-            HotkeyAction.PauseTimer => "暂停倒计时",
-            HotkeyAction.ResetTimer => "重置倒计时",
-            HotkeyAction.ToggleSimpleMode => "进入/退出简洁模式",
             HotkeyAction.ToggleTopMost => "窗口置顶开关",
             HotkeyAction.ToggleFixedMode => "窗口固定开关",
+            HotkeyAction.ToggleVisibility => "显示/隐藏窗口",
+            HotkeyAction.NextNote => "下一段便签",
+            HotkeyAction.PrevNote => "上一段便签",
             _ => action.ToString()
         };
     }
@@ -1354,16 +850,6 @@ public partial class MainWindow : Window
     private WinForms.ToolStripMenuItem CreateMenuItem(string text, Action action)
     {
         var item = new WinForms.ToolStripMenuItem(text);
-        item.Click += (_, _) => DispatchToUi(action);
-        return item;
-    }
-
-    private WinForms.ToolStripMenuItem CreateStateMenuItem(string text, Action action)
-    {
-        var item = new WinForms.ToolStripMenuItem(text)
-        {
-            CheckOnClick = false
-        };
         item.Click += (_, _) => DispatchToUi(action);
         return item;
     }
@@ -1403,416 +889,30 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    private void StartTimer()
+    private void ShowNextNote()
     {
-        if (_isRunning)
+        if (_state.NotesContent.Segments.Count <= 1)
         {
             return;
         }
 
-        if (!_sessionChainActive)
-        {
-            BeginSessionChain();
-        }
-        else if (_remainingSeconds <= 0)
-        {
-            _remainingSeconds = GetDurationForPhase(_currentPhase);
-        }
-
-        ReleaseEndAudioSource();
-        _isRunning = true;
-        _countdownTimer.Start();
-        ResumeOrStartLoopAudio();
-        UpdateCountdownText();
-        PersistRuntimeState();
-        _configService.AppendLog($"倒计时开始: {GetPhaseText(_currentPhase)} 第{_currentCycle}/{_totalCycles}轮");
-    }
-
-    private void BeginSessionChain()
-    {
-        _phaseSequence = BuildPhaseSequence();
-        _totalCycles = Math.Clamp(_state.Timer.LoopCount, 1, 99);
-        _currentCycle = 1;
-        _phaseIndexInCycle = 0;
-        _currentPhase = _phaseSequence[0];
-        _remainingSeconds = GetDurationForPhase(_currentPhase);
-        _sessionChainActive = true;
-    }
-
-    private void PauseTimer()
-    {
-        if (!_isRunning)
-        {
-            return;
-        }
-
-        _isRunning = false;
-        _countdownTimer.Stop();
-        _loopPlayer?.Pause();
-
-        PersistRuntimeState();
-        _configService.AppendLog("倒计时暂停");
-    }
-
-    private void ResetTimer()
-    {
-        _isRunning = false;
-        _countdownTimer.Stop();
-        _sessionChainActive = false;
-        _phaseSequence = BuildPhaseSequence();
-        _totalCycles = Math.Clamp(_state.Timer.LoopCount, 1, 99);
-        _currentCycle = 1;
-        _phaseIndexInCycle = 0;
-        _currentPhase = _phaseSequence[0];
-        _remainingSeconds = GetDurationForPhase(_currentPhase);
-
-        StopAllAudio();
-        UpdateCountdownText();
-        PersistRuntimeState();
-        _configService.AppendLog("倒计时重置");
-    }
-
-    private void CountdownTimer_Tick(object? sender, EventArgs e)
-    {
-        if (!_isRunning)
-        {
-            return;
-        }
-
-        _remainingSeconds = Math.Max(0, _remainingSeconds - 1);
-        UpdateCountdownText();
-        PersistRuntimeState();
-
-        if (_remainingSeconds == 0)
-        {
-            CompleteCountdown();
-        }
-    }
-
-    private void ResumeOrStartLoopAudio()
-    {
-        if (_currentPhase != TimerPhase.Work)
-        {
-            ReleaseLoopAudioSource();
-            return;
-        }
-
-        if (!_state.Timer.UseLoopAudio)
-        {
-            return;
-        }
-
-        string loopPath = _state.Timer.LoopAudioPath;
-        if (string.IsNullOrWhiteSpace(loopPath) || !File.Exists(loopPath))
-        {
-            return;
-        }
-
-        if (!_loopSourceLoaded || !string.Equals(_activeLoopPath, loopPath, StringComparison.OrdinalIgnoreCase))
-        {
-            MediaPlayer player = EnsureLoopPlayer();
-            player.Open(new Uri(loopPath));
-            _activeLoopPath = loopPath;
-            _loopSourceLoaded = true;
-        }
-
-        EnsureLoopPlayer().Play();
-    }
-
-    private void StopAllAudio()
-    {
-        ReleaseLoopAudioSource();
-        ReleaseEndAudioSource();
-    }
-
-    private void CompleteCountdown()
-    {
-        TimerPhase completedPhase = _currentPhase;
-
-        _countdownTimer.Stop();
-        _isRunning = false;
-        ReleaseLoopAudioSource();
-
-        _remainingSeconds = 0;
-        UpdateCountdownText();
-        PersistRuntimeState();
-
-        if (completedPhase == TimerPhase.Work)
-        {
-            OpenWebPageIfNeeded();
-        }
-
-        PlayEndAudio(completedPhase);
-        _configService.AppendLog($"{GetPhaseText(completedPhase)}结束: 第{_currentCycle}/{_totalCycles}轮");
-
-        if (TryMoveToNextPhase())
-        {
-            StartPhaseAutomatically();
-        }
-        else
-        {
-            _sessionChainActive = false;
-            PersistRuntimeState();
-            _configService.AppendLog($"倒计时循环完成: 共{_totalCycles}轮");
-        }
-
+        _state.NotesContent.CurrentIndex =
+            (_state.NotesContent.CurrentIndex + 1) % _state.NotesContent.Segments.Count;
+        UpdateNotesText();
         SaveState();
     }
 
-    private bool TryMoveToNextPhase()
+    private void ShowPreviousNote()
     {
-        if (!_sessionChainActive)
-        {
-            return false;
-        }
-
-        if (_phaseIndexInCycle + 1 < _phaseSequence.Count)
-        {
-            _phaseIndexInCycle++;
-            _currentPhase = _phaseSequence[_phaseIndexInCycle];
-            _remainingSeconds = GetDurationForPhase(_currentPhase);
-            return true;
-        }
-
-        if (_currentCycle < _totalCycles)
-        {
-            _currentCycle++;
-            _phaseIndexInCycle = 0;
-            _currentPhase = _phaseSequence[0];
-            _remainingSeconds = GetDurationForPhase(_currentPhase);
-            return true;
-        }
-
-        return false;
-    }
-
-    private void StartPhaseAutomatically()
-    {
-        if (_remainingSeconds <= 0)
+        int count = _state.NotesContent.Segments.Count;
+        if (count <= 1)
         {
             return;
         }
 
-        _isRunning = true;
-        _countdownTimer.Start();
-        ResumeOrStartLoopAudio();
-        UpdateCountdownText();
-        PersistRuntimeState();
-        _configService.AppendLog($"进入{GetPhaseText(_currentPhase)}: 第{_currentCycle}/{_totalCycles}轮");
-    }
-
-    private void PlayEndAudio(TimerPhase phase)
-    {
-        bool enabled = phase == TimerPhase.Work ? _state.Timer.EnableWorkEndAudio : _state.Timer.EnableRestEndAudio;
-        if (!enabled)
-        {
-            _isEndAudioPlaying = false;
-            return;
-        }
-
-        string endPath = phase == TimerPhase.Work ? _state.Timer.EndAudioPath : _state.Timer.RestEndAudioPath;
-        if (!string.IsNullOrWhiteSpace(endPath) && File.Exists(endPath))
-        {
-            ReleaseEndAudioSource();
-            MediaPlayer player = EnsureEndPlayer();
-            player.Open(new Uri(endPath));
-            player.Play();
-            _isEndAudioPlaying = true;
-            return;
-        }
-
-        _isEndAudioPlaying = false;
-        SystemSounds.Beep.Play();
-    }
-
-    private void OpenWebPageIfNeeded()
-    {
-        if (!_state.WebTask.EnableOnTimerComplete)
-        {
-            return;
-        }
-
-        if (!Uri.TryCreate(_state.WebTask.Url, UriKind.Absolute, out Uri? uri))
-        {
-            _configService.AppendLog("网页任务未执行：URL无效");
-            return;
-        }
-
-        var info = new ProcessStartInfo(uri.ToString())
-        {
-            UseShellExecute = true
-        };
-
-        try
-        {
-            _ = Process.Start(info);
-            _configService.AppendLog($"已打开网页: {uri}");
-        }
-        catch (Win32Exception ex)
-        {
-            _configService.AppendLog($"打开网页失败: {ex.Message}");
-        }
-    }
-
-    private void ConfigureWorkDuration()
-    {
-        string defaultDuration = FormatDuration(_state.Timer.WorkDurationSeconds);
-        if (!TryPrompt("工作倒计时", "请输入时:分:秒（例如 01:25:30）", defaultDuration, out string value))
-        {
-            return;
-        }
-
-        if (!TryParseDuration(value, out int seconds) || seconds < 1)
-        {
-            WpfMessageBox.Show(this, "请输入正确格式：时:分:秒（例如 00:25:00）。", "输入无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _state.Timer.WorkDurationSeconds = seconds;
-        _state.Timer.DurationSeconds = seconds;
-        _state.Timer.DurationMinutes = Math.Max(1, seconds / 60);
-        ResetTimer();
-        SaveState();
-    }
-
-    private void ConfigureRestDuration()
-    {
-        string defaultDuration = FormatDuration(_state.Timer.RestDurationSeconds);
-        if (!TryPrompt("休息倒计时", "请输入时:分:秒（例如 00:05:00）", defaultDuration, out string value))
-        {
-            return;
-        }
-
-        if (!TryParseDuration(value, out int seconds) || seconds < 1)
-        {
-            WpfMessageBox.Show(this, "请输入正确格式：时:分:秒（例如 00:05:00）。", "输入无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _state.Timer.RestDurationSeconds = seconds;
-        ResetTimer();
-        SaveState();
-    }
-
-    private void ConfigureLoopCount()
-    {
-        if (!TryPrompt("循环次数", "请输入循环次数（1~99）", _state.Timer.LoopCount.ToString(), out string value))
-        {
-            return;
-        }
-
-        if (!int.TryParse(value, out int count) || count < 1 || count > 99)
-        {
-            WpfMessageBox.Show(this, "请输入 1~99 的整数。", "输入无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _state.Timer.LoopCount = count;
-        ResetTimer();
-        SaveState();
-    }
-
-    private void SelectLoopAudio()
-    {
-        string selected = PickAudioFile();
-        if (string.IsNullOrWhiteSpace(selected))
-        {
-            return;
-        }
-
-        _state.Timer.LoopAudioPath = selected;
-        _state.Timer.UseLoopAudio = true;
-        _loopSourceLoaded = false;
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void SelectWorkEndAudio()
-    {
-        string selected = PickAudioFile();
-        if (string.IsNullOrWhiteSpace(selected))
-        {
-            return;
-        }
-
-        _state.Timer.EndAudioPath = selected;
-        _state.Timer.UseCustomEndAudio = true;
-        _state.Timer.EnableWorkEndAudio = true;
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void SelectRestEndAudio()
-    {
-        string selected = PickAudioFile();
-        if (string.IsNullOrWhiteSpace(selected))
-        {
-            return;
-        }
-
-        _state.Timer.RestEndAudioPath = selected;
-        _state.Timer.UseCustomRestEndAudio = true;
-        _state.Timer.EnableRestEndAudio = true;
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void ToggleLoopAudioEnabled(bool enabled)
-    {
-        _state.Timer.UseLoopAudio = enabled;
-        if (!enabled)
-        {
-            ReleaseLoopAudioSource();
-        }
-
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void ToggleWorkEndAudioEnabled(bool enabled)
-    {
-        _state.Timer.EnableWorkEndAudio = enabled;
-        if (!enabled)
-        {
-            ReleaseEndAudioSource();
-        }
-
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void ToggleRestEndAudioEnabled(bool enabled)
-    {
-        _state.Timer.EnableRestEndAudio = enabled;
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void CancelLoopAudio()
-    {
-        _state.Timer.LoopAudioPath = string.Empty;
-        _state.Timer.UseLoopAudio = false;
-        ReleaseLoopAudioSource();
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void CancelWorkEndAudio()
-    {
-        _state.Timer.EnableWorkEndAudio = false;
-        _state.Timer.UseCustomEndAudio = false;
-        _state.Timer.EndAudioPath = string.Empty;
-        ReleaseEndAudioSource();
-        UpdateAudioMenuChecks();
-        SaveState();
-    }
-
-    private void CancelRestEndAudio()
-    {
-        _state.Timer.EnableRestEndAudio = false;
-        _state.Timer.UseCustomRestEndAudio = false;
-        _state.Timer.RestEndAudioPath = string.Empty;
-        UpdateAudioMenuChecks();
+        _state.NotesContent.CurrentIndex =
+            (_state.NotesContent.CurrentIndex - 1 + count) % count;
+        UpdateNotesText();
         SaveState();
     }
 
@@ -1858,27 +958,6 @@ public partial class MainWindow : Window
         SaveState();
     }
 
-    private void ConfigureCountdownFont()
-    {
-        using var dialog = new WinForms.FontDialog
-        {
-            ShowColor = false,
-            ShowEffects = false
-        };
-
-        dialog.Font = new Drawing.Font(_state.App.CountdownFontFamily, (float)_state.App.CountdownFontSize, Drawing.FontStyle.Bold);
-        if (dialog.ShowDialog() != WinForms.DialogResult.OK)
-        {
-            return;
-        }
-
-        _state.App.CountdownFontFamily = dialog.Font.FontFamily.Name;
-        _state.App.CountdownFontSize = Math.Clamp(dialog.Font.Size, 10, 60);
-        ApplyTextAppearance();
-        ApplyResponsiveLayout();
-        SaveState();
-    }
-
     private void ConfigureNoteFontSize()
     {
         if (!TryPrompt("便签字号", "请输入便签字号（10~132）", _state.Notes.FontSize.ToString("0"), out string value))
@@ -1897,24 +976,6 @@ public partial class MainWindow : Window
         SaveState();
     }
 
-    private void ConfigureCountdownFontSize()
-    {
-        if (!TryPrompt("倒计时字号", "请输入倒计时字号（10~60）", _state.App.CountdownFontSize.ToString("0"), out string value))
-        {
-            return;
-        }
-
-        if (!double.TryParse(value, out double fontSize) || fontSize < 10 || fontSize > 60)
-        {
-            WpfMessageBox.Show(this, "请输入 10~60 的数字。", "输入无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _state.App.CountdownFontSize = fontSize;
-        ApplyResponsiveLayout();
-        SaveState();
-    }
-
     private void ConfigureNotesTextColor()
     {
         if (!TrySelectColor("选择便签文字颜色", _state.App.NotesTextColor, out string colorHex))
@@ -1923,18 +984,6 @@ public partial class MainWindow : Window
         }
 
         _state.App.NotesTextColor = colorHex;
-        ApplyTextAppearance();
-        SaveState();
-    }
-
-    private void ConfigureCountdownTextColor()
-    {
-        if (!TrySelectColor("选择倒计时文字颜色", _state.App.CountdownTextColor, out string colorHex))
-        {
-            return;
-        }
-
-        _state.App.CountdownTextColor = colorHex;
         ApplyTextAppearance();
         SaveState();
     }
@@ -1973,74 +1022,6 @@ public partial class MainWindow : Window
 
         _state.Notes.RotationSeconds = seconds;
         ConfigureNoteRotationTimer();
-        SaveState();
-    }
-
-    private void ConfigureWebUrl()
-    {
-        if (!TryPrompt("定时打开网页", "请输入完整 URL（例：https://example.com）", _state.WebTask.Url, out string value))
-        {
-            return;
-        }
-
-        if (!Uri.TryCreate(value, UriKind.Absolute, out _))
-        {
-            WpfMessageBox.Show(this, "URL 格式无效。", "输入无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _state.WebTask.Url = value;
-        SaveState();
-    }
-
-    private void ToggleWebOpenOnComplete(bool enabled)
-    {
-        _state.WebTask.EnableOnTimerComplete = enabled;
-        SaveState();
-    }
-
-    private void ToggleWorkSession(bool enabled)
-    {
-        if (!enabled && !_state.Timer.EnableRestSession)
-        {
-            _state.Timer.EnableWorkSession = true;
-            if (_workSessionEnabledItem is not null)
-            {
-                SetMenuChecked(_workSessionEnabledItem, true);
-            }
-            WpfMessageBox.Show(this, "工作时间和休息时间至少要保留一个。", "设置提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        _state.Timer.EnableWorkSession = enabled;
-        UpdateTimerModeChecks();
-        ResetTimer();
-        SaveState();
-    }
-
-    private void ToggleRestSession(bool enabled)
-    {
-        if (!enabled && !_state.Timer.EnableWorkSession)
-        {
-            _state.Timer.EnableRestSession = true;
-            if (_restSessionEnabledItem is not null)
-            {
-                SetMenuChecked(_restSessionEnabledItem, true);
-            }
-            WpfMessageBox.Show(this, "工作时间和休息时间至少要保留一个。", "设置提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        _state.Timer.EnableRestSession = enabled;
-        UpdateTimerModeChecks();
-        ResetTimer();
-        SaveState();
-    }
-
-    private void ToggleSimpleMode(bool enabled)
-    {
-        _state.App.SimpleMode = enabled;
-        ApplyResponsiveLayout();
         SaveState();
     }
 
@@ -2132,38 +1113,7 @@ public partial class MainWindow : Window
 
         _state.NotesContent.CurrentIndex = (_state.NotesContent.CurrentIndex + 1) % _state.NotesContent.Segments.Count;
         UpdateNotesText();
-        PersistRuntimeState();
-    }
-
-    private void LoopPlayer_MediaEnded(object? sender, EventArgs e)
-    {
-        if (!_isRunning || _currentPhase != TimerPhase.Work)
-        {
-            return;
-        }
-
-        if (sender is MediaPlayer player)
-        {
-            player.Position = TimeSpan.Zero;
-            player.Play();
-        }
-    }
-
-    private void LoopPlayer_MediaFailed(object? sender, ExceptionEventArgs e)
-    {
-        _configService.AppendLog($"过程音频播放失败: {e.ErrorException.Message}");
-        ReleaseLoopAudioSource();
-    }
-
-    private void EndPlayer_MediaEnded(object? sender, EventArgs e)
-    {
-        ReleaseEndAudioSource();
-    }
-
-    private void EndPlayer_MediaFailed(object? sender, ExceptionEventArgs e)
-    {
-        _configService.AppendLog($"尾声音频播放失败: {e.ErrorException.Message}");
-        ReleaseEndAudioSource();
+        SaveState();
     }
 
     private void ConfigureNoteRotationTimer()
@@ -2204,57 +1154,90 @@ public partial class MainWindow : Window
             ApplyVisualEffects();
         }
 
-        if (_isEndAudioPlaying)
-        {
-            return;
-        }
-
-        if (!_isRunning)
-        {
-            ReleaseLoopAudioSource();
-            ReleaseEndAudioSource();
-        }
         TrimMemoryUsage();
     }
 
     private void LoadWindowIcon()
     {
-        Stream? embeddedStream = TryOpenEmbeddedResource(DefaultIconFileName);
-        if (embeddedStream is not null)
+        try
         {
-            using (embeddedStream)
+            Stream? embeddedStream = TryOpenEmbeddedResource(DefaultIconFileName);
+            if (embeddedStream is not null)
             {
-                Icon = BitmapFrame.Create(embeddedStream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                using (embeddedStream)
+                {
+                    var decoder = new IconBitmapDecoder(
+                        embeddedStream,
+                        BitmapCreateOptions.None,
+                        BitmapCacheOption.OnLoad);
+                    if (decoder.Frames.Count > 0)
+                    {
+                        Icon = decoder.Frames[0];
+                        return;
+                    }
+                }
             }
-            return;
-        }
 
-        string iconPath = Path.Combine(AppContext.BaseDirectory, DefaultIconFileName);
-        if (File.Exists(iconPath))
+            string iconPath = Path.Combine(AppContext.BaseDirectory, DefaultIconFileName);
+            if (File.Exists(iconPath))
+            {
+                var fileDecoder = new IconBitmapDecoder(
+                    new Uri(iconPath),
+                    BitmapCreateOptions.None,
+                    BitmapCacheOption.OnLoad);
+                if (fileDecoder.Frames.Count > 0)
+                {
+                    Icon = fileDecoder.Frames[0];
+                }
+            }
+        }
+        catch (Exception ex)
         {
-            Icon = BitmapFrame.Create(new Uri(iconPath));
+            _configService.AppendLog($"窗口图标加载失败: {ex.Message}");
         }
     }
 
     private Drawing.Icon LoadTrayIcon()
     {
-        Stream? embeddedStream = TryOpenEmbeddedResource(DefaultIconFileName);
-        if (embeddedStream is not null)
+        try
         {
-            using (embeddedStream)
-            using (var icon = new Drawing.Icon(embeddedStream))
+            Stream? embeddedStream = TryOpenEmbeddedResource(DefaultIconFileName);
+            if (embeddedStream is not null)
             {
-                return (Drawing.Icon)icon.Clone();
+                using (embeddedStream)
+                using (var icon = new Drawing.Icon(embeddedStream))
+                {
+                    return (Drawing.Icon)icon.Clone();
+                }
+            }
+
+            string iconPath = Path.Combine(AppContext.BaseDirectory, DefaultIconFileName);
+            if (File.Exists(iconPath))
+            {
+                return new Drawing.Icon(iconPath);
             }
         }
-
-        string iconPath = Path.Combine(AppContext.BaseDirectory, DefaultIconFileName);
-        if (File.Exists(iconPath))
+        catch (Exception ex)
         {
-            return new Drawing.Icon(iconPath);
+            _configService.AppendLog($"托盘图标加载失败: {ex.Message}");
         }
 
         return Drawing.SystemIcons.Application;
+    }
+
+    private static Stream? TryOpenEmbeddedResource(string fileName)
+    {
+        string? resourceName = typeof(MainWindow)
+            .Assembly
+            .GetManifestResourceNames()
+            .FirstOrDefault(x => x.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrWhiteSpace(resourceName))
+        {
+            return null;
+        }
+
+        return typeof(MainWindow).Assembly.GetManifestResourceStream(resourceName);
     }
 
     private void ApplyStateToUi()
@@ -2265,10 +1248,8 @@ public partial class MainWindow : Window
         ResizeMode = _state.App.FixedMode ? ResizeMode.NoResize : ResizeMode.CanResizeWithGrip;
 
         ApplyTextAppearance();
-        UpdateCountdownText();
         UpdateNotesText();
         ApplyResponsiveLayout();
-        UpdateTimerModeChecks();
     }
 
     private void ApplyVisualEffects()
@@ -2457,53 +1438,8 @@ public partial class MainWindow : Window
         double heightScale = ActualHeight / 210.0;
         double scale = Math.Clamp(Math.Max(widthScale, heightScale), 0.40, 4.20);
 
-        if (_state.App.SimpleMode)
-        {
-            NotesDisplayText.Visibility = Visibility.Collapsed;
-            NotesDisplayText.Margin = new Thickness(0);
-            CountdownText.VerticalAlignment = System.Windows.VerticalAlignment.Center;
-            CountdownText.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
-            CountdownText.Margin = new Thickness(0);
-            int textLength = Math.Max(5, CountdownText.Text?.Length ?? 5);
-            double availableWidth = Math.Max(24, RootBorder.ActualWidth - 8);
-            double availableHeight = Math.Max(24, RootBorder.ActualHeight - 8);
-            double widthDriven = availableWidth / Math.Max(2.2, textLength * 0.58);
-            double heightDriven = availableHeight * 0.82;
-            CountdownText.FontSize = QuantizeFontSize(Math.Clamp(Math.Min(widthDriven, heightDriven), 12, 280));
-            return;
-        }
-
-        NotesDisplayText.Visibility = Visibility.Visible;
-        CountdownText.VerticalAlignment = VerticalAlignment.Bottom;
-        CountdownText.Margin = new Thickness(0, 0, 0, 4);
-
-        CountdownText.FontSize = QuantizeFontSize(Math.Clamp(_state.App.CountdownFontSize * scale, 14, 180));
         NotesDisplayText.FontSize = QuantizeFontSize(Math.Clamp(_state.Notes.FontSize * scale, 10, 132));
-
-        double bottomGap = Math.Clamp((CountdownText.FontSize * 0.78) + (8 * scale), 24, 260);
-        NotesDisplayText.Margin = new Thickness(8, 8, 8, bottomGap);
-    }
-
-    private void UpdateCountdownText()
-    {
-        if (GetDurationForPhase(_currentPhase) < 3600)
-        {
-            int minutes = _remainingSeconds / 60;
-            int seconds = _remainingSeconds % 60;
-            CountdownText.Text = $"{minutes:00}:{seconds:00}";
-        }
-        else
-        {
-            int hours = _remainingSeconds / 3600;
-            int mins = (_remainingSeconds % 3600) / 60;
-            int secs = _remainingSeconds % 60;
-            CountdownText.Text = $"{hours:00}:{mins:00}:{secs:00}";
-        }
-
-        if (_state.App.SimpleMode)
-        {
-            ApplyResponsiveLayout();
-        }
+        NotesDisplayText.Margin = new Thickness(10);
     }
 
     private void UpdateNotesText()
@@ -2550,9 +1486,7 @@ public partial class MainWindow : Window
     private void ApplyTextAppearance()
     {
         NotesDisplayText.FontFamily = ResolveFontFamily(_state.Notes.FontFamily);
-        CountdownText.FontFamily = ResolveFontFamily(_state.App.CountdownFontFamily);
         NotesDisplayText.Foreground = new SolidColorBrush(ParseMediaColor(_state.App.NotesTextColor, Color.FromRgb(255, 182, 193)));
-        CountdownText.Foreground = new SolidColorBrush(ParseMediaColor(_state.App.CountdownTextColor, Color.FromRgb(173, 216, 230)));
     }
 
     private static FontFamily ResolveFontFamily(string requested)
@@ -2621,47 +1555,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private static string FormatDuration(int totalSeconds)
-    {
-        int safe = Math.Max(0, totalSeconds);
-        int h = safe / 3600;
-        int m = (safe % 3600) / 60;
-        int s = safe % 60;
-        return $"{h:00}:{m:00}:{s:00}";
-    }
-
-    private static bool TryParseDuration(string input, out int totalSeconds)
-    {
-        totalSeconds = 0;
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return false;
-        }
-
-        string normalized = input.Trim().Replace('：', ':');
-        string[] parts = normalized.Split(':');
-        if (parts.Length != 3)
-        {
-            return false;
-        }
-
-        bool parsedH = int.TryParse(parts[0], out int hours);
-        bool parsedM = int.TryParse(parts[1], out int minutes);
-        bool parsedS = int.TryParse(parts[2], out int seconds);
-        if (!parsedH || !parsedM || !parsedS)
-        {
-            return false;
-        }
-
-        if (hours < 0 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59)
-        {
-            return false;
-        }
-
-        totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
-        return totalSeconds > 0;
-    }
-
     private bool TrySelectColor(string title, string currentHex, out string selectedHex)
     {
         using var dialog = new WinForms.ColorDialog
@@ -2694,37 +1587,12 @@ public partial class MainWindow : Window
         return result == true;
     }
 
-    private string PickAudioFile()
-    {
-        var dialog = new MsOpenFileDialog
-        {
-            Title = "选择音频文件",
-            Filter = "音频文件|*.wav;*.mp3;*.wma;*.aac;*.m4a|所有文件|*.*",
-            CheckFileExists = true
-        };
-
-        bool? result = dialog.ShowDialog(this);
-        return result == true ? dialog.FileName : string.Empty;
-    }
-
     private void SaveState()
     {
-        PersistRuntimeState();
-        _configService.Save(_state);
-    }
-
-    private void PersistRuntimeState()
-    {
-        _state.Runtime.RemainingSeconds = _remainingSeconds;
-        _state.Runtime.CurrentPhase = _currentPhase == TimerPhase.Work ? "Work" : "Rest";
-        _state.Runtime.CurrentCycle = _currentCycle;
-        _state.Runtime.TotalCycles = _totalCycles;
-        _state.Runtime.PhaseIndex = _phaseIndexInCycle;
-        _state.Runtime.SessionChainActive = _sessionChainActive;
-
         _state.App.TopMost = Topmost;
         _state.App.WindowWidth = (int)Width;
         _state.App.WindowHeight = (int)Height;
+        _configService.Save(_state);
     }
 
     private static string GetCurrentExePath()
@@ -2823,32 +1691,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private MediaPlayer EnsureLoopPlayer()
-    {
-        if (_loopPlayer is not null)
-        {
-            return _loopPlayer;
-        }
-
-        _loopPlayer = new MediaPlayer();
-        _loopPlayer.MediaEnded += LoopPlayer_MediaEnded;
-        _loopPlayer.MediaFailed += LoopPlayer_MediaFailed;
-        return _loopPlayer;
-    }
-
-    private MediaPlayer EnsureEndPlayer()
-    {
-        if (_endPlayer is not null)
-        {
-            return _endPlayer;
-        }
-
-        _endPlayer = new MediaPlayer();
-        _endPlayer.MediaEnded += EndPlayer_MediaEnded;
-        _endPlayer.MediaFailed += EndPlayer_MediaFailed;
-        return _endPlayer;
-    }
-
     private void SuspendWindowForTray()
     {
         if (_suspendedForTray)
@@ -2886,35 +1728,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ReleaseLoopAudioSource()
-    {
-        if (_loopPlayer is not null)
-        {
-            _loopPlayer.MediaEnded -= LoopPlayer_MediaEnded;
-            _loopPlayer.MediaFailed -= LoopPlayer_MediaFailed;
-            _loopPlayer.Stop();
-            _loopPlayer.Close();
-            _loopPlayer = null;
-        }
-        _loopSourceLoaded = false;
-        _activeLoopPath = string.Empty;
-    }
-
-    private void ReleaseEndAudioSource()
-    {
-        _isEndAudioPlaying = false;
-        if (_endPlayer is null)
-        {
-            return;
-        }
-
-        _endPlayer.MediaEnded -= EndPlayer_MediaEnded;
-        _endPlayer.MediaFailed -= EndPlayer_MediaFailed;
-        _endPlayer.Stop();
-        _endPlayer.Close();
-        _endPlayer = null;
-    }
-
     private void TrimMemoryUsage()
     {
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
@@ -2942,9 +1755,6 @@ public partial class MainWindow : Window
             _notifyIcon.Dispose();
             _notifyIcon = null;
         }
-
-        _leftPresetMenu?.Dispose();
-        _leftPresetMenu = null;
 
         _trayIcon?.Dispose();
         _trayIcon = null;

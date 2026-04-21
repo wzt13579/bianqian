@@ -18,12 +18,11 @@ public partial class HotkeySettingsDialog : Window
 
         _boxes = new Dictionary<string, WpfTextBox>(System.StringComparer.OrdinalIgnoreCase)
         {
-            ["StartTimer"] = StartTimerTextBox,
-            ["PauseTimer"] = PauseTimerTextBox,
-            ["ResetTimer"] = ResetTimerTextBox,
-            ["ToggleSimpleMode"] = ToggleSimpleModeTextBox,
             ["ToggleTopMost"] = ToggleTopMostTextBox,
-            ["ToggleFixedMode"] = ToggleFixedModeTextBox
+            ["ToggleFixedMode"] = ToggleFixedModeTextBox,
+            ["ToggleVisibility"] = ToggleVisibilityTextBox,
+            ["NextNote"] = NextNoteTextBox,
+            ["PrevNote"] = PrevNoteTextBox
         };
 
         Hotkeys = Clone(current);
@@ -38,23 +37,21 @@ public partial class HotkeySettingsDialog : Window
         source ??= new HotkeySettings();
         return new HotkeySettings
         {
-            StartTimer = source.StartTimer,
-            PauseTimer = source.PauseTimer,
-            ResetTimer = source.ResetTimer,
-            ToggleSimpleMode = source.ToggleSimpleMode,
             ToggleTopMost = source.ToggleTopMost,
-            ToggleFixedMode = source.ToggleFixedMode
+            ToggleFixedMode = source.ToggleFixedMode,
+            ToggleVisibility = source.ToggleVisibility,
+            NextNote = source.NextNote,
+            PrevNote = source.PrevNote
         };
     }
 
     private void ApplyHotkeysToInputs(HotkeySettings value)
     {
-        StartTimerTextBox.Text = value.StartTimer;
-        PauseTimerTextBox.Text = value.PauseTimer;
-        ResetTimerTextBox.Text = value.ResetTimer;
-        ToggleSimpleModeTextBox.Text = value.ToggleSimpleMode;
         ToggleTopMostTextBox.Text = value.ToggleTopMost;
         ToggleFixedModeTextBox.Text = value.ToggleFixedMode;
+        ToggleVisibilityTextBox.Text = value.ToggleVisibility;
+        NextNoteTextBox.Text = value.NextNote;
+        PrevNoteTextBox.Text = value.PrevNote;
     }
 
     private void HotkeyInput_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -246,12 +243,11 @@ public partial class HotkeySettingsDialog : Window
     {
         var settings = new HotkeySettings
         {
-            StartTimer = StartTimerTextBox.Text.Trim(),
-            PauseTimer = PauseTimerTextBox.Text.Trim(),
-            ResetTimer = ResetTimerTextBox.Text.Trim(),
-            ToggleSimpleMode = ToggleSimpleModeTextBox.Text.Trim(),
             ToggleTopMost = ToggleTopMostTextBox.Text.Trim(),
-            ToggleFixedMode = ToggleFixedModeTextBox.Text.Trim()
+            ToggleFixedMode = ToggleFixedModeTextBox.Text.Trim(),
+            ToggleVisibility = ToggleVisibilityTextBox.Text.Trim(),
+            NextNote = NextNoteTextBox.Text.Trim(),
+            PrevNote = PrevNoteTextBox.Text.Trim()
         };
         settings.Normalize();
 
@@ -271,12 +267,11 @@ public partial class HotkeySettingsDialog : Window
     {
         var pairs = new[]
         {
-            ("开启倒计时", settings.StartTimer),
-            ("暂停倒计时", settings.PauseTimer),
-            ("重置倒计时", settings.ResetTimer),
-            ("进入/退出简洁模式", settings.ToggleSimpleMode),
             ("窗口置顶开关", settings.ToggleTopMost),
-            ("窗口固定开关", settings.ToggleFixedMode)
+            ("窗口固定开关", settings.ToggleFixedMode),
+            ("显示/隐藏窗口", settings.ToggleVisibility),
+            ("下一段便签", settings.NextNote),
+            ("上一段便签", settings.PrevNote)
         };
 
         string[] duplicates = pairs
@@ -300,12 +295,11 @@ public partial class HotkeySettingsDialog : Window
     {
         return actionKey switch
         {
-            "StartTimer" => "开启倒计时",
-            "PauseTimer" => "暂停倒计时",
-            "ResetTimer" => "重置倒计时",
-            "ToggleSimpleMode" => "进入/退出简洁模式",
             "ToggleTopMost" => "窗口置顶开关",
             "ToggleFixedMode" => "窗口固定开关",
+            "ToggleVisibility" => "显示/隐藏窗口",
+            "NextNote" => "下一段便签",
+            "PrevNote" => "上一段便签",
             _ => "快捷键"
         };
     }

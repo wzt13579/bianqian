@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="番茄钟便签"
+        Title="便签"
         Width="380"
         Height="210"
         MinWidth="140"
@@ -52,20 +52,12 @@
                        Text="在这里记录你的任务..."
                        Foreground="#FFF4F4F4"
                        TextWrapping="Wrap"
-                       VerticalAlignment="Stretch"
+                       VerticalAlignment="Center"
                        HorizontalAlignment="Stretch"
-                       Margin="8,8,8,44"
+                       TextAlignment="Center"
+                       Margin="10"
                        FontSize="18"
                        FontFamily="Microsoft YaHei UI" />
-
-            <TextBlock x:Name="CountdownText"
-                       Text="25:00"
-                       Foreground="#FFFFFFFF"
-                       FontWeight="SemiBold"
-                       FontSize="26"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Bottom"
-                       Margin="0,0,0,4" />
         </Grid>
     </Border>
 </Window>

@@ -13,40 +13,29 @@ public sealed class ConfigService
         WriteIndented = true
     };
 
-    private readonly string _rootDir;
     private readonly string _configDir;
     private readonly string _dataDir;
-    private readonly string _audioDir;
     private readonly string _logsDir;
 
     private readonly string _appConfigPath;
-    private readonly string _timerConfigPath;
     private readonly string _notesConfigPath;
-    private readonly string _webTaskConfigPath;
     private readonly string _notesContentPath;
-    private readonly string _runtimeStatePath;
     private readonly string _logPath;
 
     public ConfigService(string rootDir)
     {
-        _rootDir = rootDir;
         _configDir = Path.Combine(rootDir, "config");
         _dataDir = Path.Combine(rootDir, "data");
-        _audioDir = Path.Combine(rootDir, "audio");
         _logsDir = Path.Combine(rootDir, "logs");
 
         _appConfigPath = Path.Combine(_configDir, "app.json");
-        _timerConfigPath = Path.Combine(_configDir, "timer.json");
         _notesConfigPath = Path.Combine(_configDir, "notes.json");
-        _webTaskConfigPath = Path.Combine(_configDir, "web_tasks.json");
         _notesContentPath = Path.Combine(_dataDir, "notes_content.json");
-        _runtimeStatePath = Path.Combine(_dataDir, "runtime_state.json");
         _logPath = Path.Combine(_logsDir, "app.log");
     }
 
     public string ConfigDirectory => _configDir;
     public string DataDirectory => _dataDir;
-    public string AudioDirectory => _audioDir;
     public string LogsDirectory => _logsDir;
     public string LogPath => _logPath;
 
@@ -57,11 +46,8 @@ public sealed class ConfigService
         var state = new AppState
         {
             App = LoadJsonFile(_appConfigPath, new AppSettings()),
-            Timer = LoadJsonFile(_timerConfigPath, new TimerSettings()),
             Notes = LoadJsonFile(_notesConfigPath, new NotesSettings()),
-            WebTask = LoadJsonFile(_webTaskConfigPath, new WebTaskSettings()),
-            NotesContent = LoadJsonFile(_notesContentPath, new NotesContent()),
-            Runtime = LoadJsonFile(_runtimeStatePath, new RuntimeState())
+            NotesContent = LoadJsonFile(_notesContentPath, new NotesContent())
         };
 
         state.Normalize();
@@ -75,20 +61,14 @@ public sealed class ConfigService
         EnsureLayout();
 
         SaveJsonFile(_appConfigPath, state.App);
-        SaveJsonFile(_timerConfigPath, state.Timer);
         SaveJsonFile(_notesConfigPath, state.Notes);
-        SaveJsonFile(_webTaskConfigPath, state.WebTask);
         SaveJsonFile(_notesContentPath, state.NotesContent);
-        SaveJsonFile(_runtimeStatePath, state.Runtime);
     }
 
     public void EnsureLayout()
     {
         Directory.CreateDirectory(_configDir);
         Directory.CreateDirectory(_dataDir);
-        Directory.CreateDirectory(_audioDir);
-        Directory.CreateDirectory(Path.Combine(_audioDir, "timer_loop"));
-        Directory.CreateDirectory(Path.Combine(_audioDir, "countdown_end"));
         Directory.CreateDirectory(_logsDir);
 
         if (!File.Exists(_logPath))

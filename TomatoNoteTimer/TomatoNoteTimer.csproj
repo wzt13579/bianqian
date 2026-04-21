@@ -12,7 +12,6 @@
 
   <ItemGroup>
     <EmbeddedResource Include="..\icon.ico" Link="Assets\icon.ico" />
-    <EmbeddedResource Include="..\音乐预设.mp3" Link="Assets\音乐预设.mp3" />
   </ItemGroup>
 
   <ItemGroup>

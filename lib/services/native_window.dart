@@ -98,4 +98,45 @@ class NativeWindow {
     if (hwnd == 0) return;
     PostMessage(hwnd, WM_CLOSE, 0, 0);
   }
+
+  // ============== 位置 / 尺寸（贴边隐藏需要） ==============
+
+  /// 返回 (left, top, width, height)；失败返回 (0,0,0,0)。
+  static (int left, int top, int width, int height) getRect(int hwnd) {
+    if (hwnd == 0) return (0, 0, 0, 0);
+    final r = calloc<RECT>();
+    try {
+      if (GetWindowRect(hwnd, r) == 0) return (0, 0, 0, 0);
+      return (
+        r.ref.left,
+        r.ref.top,
+        r.ref.right - r.ref.left,
+        r.ref.bottom - r.ref.top
+      );
+    } finally {
+      calloc.free(r);
+    }
+  }
+
+  /// 仅移动窗口到 (x, y)，不改变大小、不改变 z-order。
+  static void moveTo(int hwnd, int x, int y) {
+    if (hwnd == 0) return;
+    SetWindowPos(
+      hwnd,
+      0,
+      x,
+      y,
+      0,
+      0,
+      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+  }
+
+  /// 获取主屏幕（不含任务栏）的工作区像素尺寸。
+  static (int width, int height) getPrimaryScreenSize() {
+    return (
+      GetSystemMetrics(SM_CXSCREEN),
+      GetSystemMetrics(SM_CYSCREEN),
+    );
+  }
 }

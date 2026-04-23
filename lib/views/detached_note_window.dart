@@ -9,6 +9,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import '../models/note.dart';
 import '../services/native_window.dart';
 import '../services/remote_note_service.dart';
+import '../services/sub_window_edge_hide.dart';
 
 /// 一条便签被"分离"出来后，运行在独立桌面窗口中的根视图。
 ///
@@ -40,6 +41,9 @@ class _DetachedNoteAppState extends State<DetachedNoteApp> {
 
   /// 子窗口的原生 HWND（通过 unique title 在启动后定位到）。
   int _hwnd = 0;
+
+  /// 子窗口贴边隐藏（子窗口里 window_manager 不可用，自己用 win32 实现一套）。
+  SubWindowEdgeHide? _edgeHide;
 
   late final TextEditingController _titleCtrl;
   late final TextEditingController _bodyCtrl;
@@ -79,6 +83,8 @@ class _DetachedNoteAppState extends State<DetachedNoteApp> {
     NativeWindow.removeMaximizeAndResize(_hwnd);
     // 应用主程序图标
     NativeWindow.applyExeIcon(_hwnd);
+    // 启动贴边隐藏
+    _edgeHide = SubWindowEdgeHide(hwnd: _hwnd)..enable();
     // 同步置顶状态
     if (mounted) {
       setState(() {
@@ -156,6 +162,7 @@ class _DetachedNoteAppState extends State<DetachedNoteApp> {
   void dispose() {
     _saveTimer?.cancel();
     _save();
+    _edgeHide?.dispose();
     _titleCtrl.dispose();
     _bodyCtrl.dispose();
     super.dispose();
@@ -185,15 +192,19 @@ class _DetachedNoteAppState extends State<DetachedNoteApp> {
     }
     final note = _note!;
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
-      },
-      child: Focus(
-        autofocus: true,
-        child: Container(
-          color: Color(note.color),
-          child: Column(
+    return MouseRegion(
+      opaque: false,
+      onEnter: (_) => _edgeHide?.onMouseEnter(),
+      onExit: (_) => _edgeHide?.onMouseExit(),
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+        },
+        child: Focus(
+          autofocus: true,
+          child: Container(
+            color: Color(note.color),
+            child: Column(
             children: [
               _DetachedToolbar(
                 isPreview: _isPreview,
@@ -250,6 +261,7 @@ class _DetachedNoteAppState extends State<DetachedNoteApp> {
                       ),
               ),
             ],
+          ),
           ),
         ),
       ),

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/note.dart';
 import '../providers/providers.dart';
 import '../services/import_export_service.dart';
+import '../services/note_repository.dart';
 import '../theme/app_theme.dart';
 
 /// 便签编辑器（标题 + Markdown 内容 + 工具栏）。
@@ -23,11 +24,16 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
   late final TextEditingController _bodyCtrl;
   String _loadedNoteId = '';
 
+  /// 缓存 repo 引用，避免 dispose 后还要通过 [ref] 取依赖。
+  /// （ref 在 widget unmount 后访问会抛 "Cannot use ref after disposed"）
+  NoteRepository? _repo;
+
   @override
   void initState() {
     super.initState();
     _titleCtrl = TextEditingController();
     _bodyCtrl = TextEditingController();
+    _repo = ref.read(noteRepositoryProvider);
     _syncFromNote();
   }
 
@@ -40,7 +46,8 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
   }
 
   Future<void> _save() async {
-    final repo = ref.read(noteRepositoryProvider);
+    final repo = _repo;
+    if (repo == null) return;
     final note = repo.getById(widget.noteId);
     if (note == null) return;
     note.title = _titleCtrl.text;

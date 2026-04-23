@@ -12,6 +12,7 @@ class NoteCard extends StatelessWidget {
     required this.onTap,
     required this.onTogglePin,
     required this.onDelete,
+    this.onDetach,
   });
 
   final Note note;
@@ -19,6 +20,9 @@ class NoteCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onTogglePin;
   final VoidCallback onDelete;
+
+  /// 为 null 时不显示"分离"按钮（如回收站场景）。
+  final VoidCallback? onDetach;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +104,15 @@ class NoteCard extends StatelessWidget {
                           : FluentIcons.pin,
                       onPressed: onTogglePin,
                     ),
+                    if (onDetach != null) ...[
+                      const SizedBox(width: 6),
+                      _MiniIcon(
+                        icon: note.isDetached
+                            ? FluentIcons.open_in_new_window
+                            : FluentIcons.open_pane,
+                        onPressed: onDetach!,
+                      ),
+                    ],
                     const SizedBox(width: 6),
                     _MiniIcon(
                       icon: FluentIcons.delete,

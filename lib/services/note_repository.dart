@@ -89,4 +89,91 @@ class NoteRepository {
     note.updateTime = DateTime.now();
     await _box.put(id, note);
   }
+
+  // ====== 回收站 ======
+
+  /// 回收站中的便签（仅 isDeleted == true）。
+  List<Note> getTrash() {
+    final notes = _box.values.where((n) => n.isDeleted).toList();
+    notes.sort((a, b) => b.updateTime.compareTo(a.updateTime));
+    return notes;
+  }
+
+  /// 从回收站恢复。
+  Future<void> restore(String id) async {
+    final note = _box.get(id);
+    if (note == null) return;
+    note.isDeleted = false;
+    note.updateTime = DateTime.now();
+    await _box.put(id, note);
+  }
+
+  /// 清空回收站（物理删除所有 isDeleted=true 的便签）。
+  Future<int> emptyTrash() async {
+    final keys = _box.values.where((n) => n.isDeleted).map((n) => n.id).toList();
+    await _box.deleteAll(keys);
+    return keys.length;
+  }
+
+  // ====== 标签 ======
+
+  /// 所有出现过的标签（去重）按字典序排序。
+  List<String> allTags() {
+    final s = <String>{};
+    for (final n in _box.values) {
+      if (n.isDeleted) continue;
+      s.addAll(n.tags);
+    }
+    final list = s.toList()..sort();
+    return list;
+  }
+
+  /// 按标签筛选便签。
+  List<Note> getByTag(String tag) {
+    final notes = _box.values
+        .where((n) => !n.isDeleted && n.tags.contains(tag))
+        .toList();
+    notes.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      return b.updateTime.compareTo(a.updateTime);
+    });
+    return notes;
+  }
+
+  /// 给便签增加 / 移除标签。
+  Future<void> setTags(String id, List<String> tags) async {
+    final note = _box.get(id);
+    if (note == null) return;
+    note.tags = tags.where((t) => t.trim().isNotEmpty).toSet().toList();
+    note.updateTime = DateTime.now();
+    await _box.put(id, note);
+  }
+
+  /// 全局重命名一个标签（影响所有便签）。
+  Future<int> renameTag(String oldTag, String newTag) async {
+    int affected = 0;
+    for (final n in _box.values.toList()) {
+      if (n.tags.contains(oldTag)) {
+        n.tags = n.tags.map((t) => t == oldTag ? newTag : t).toSet().toList();
+        n.updateTime = DateTime.now();
+        await _box.put(n.id, n);
+        affected++;
+      }
+    }
+    return affected;
+  }
+
+  /// 全局删除一个标签。
+  Future<int> deleteTag(String tag) async {
+    int affected = 0;
+    for (final n in _box.values.toList()) {
+      if (n.tags.contains(tag)) {
+        n.tags = n.tags.where((t) => t != tag).toList();
+        n.updateTime = DateTime.now();
+        await _box.put(n.id, n);
+        affected++;
+      }
+    }
+    return affected;
+  }
 }

@@ -111,6 +111,7 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
                   onChanged: (_) => _save(),
                 ),
               ),
+              _TagBar(note: note),
               const SizedBox(height: 8),
               Expanded(
                 child: Padding(
@@ -214,6 +215,118 @@ class _ToolBtn extends StatelessWidget {
       child: IconButton(
         icon: Icon(icon, size: 14),
         onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+/// 编辑器中的"标签条"——展示当前便签的标签 + 添加新标签。
+class _TagBar extends ConsumerWidget {
+  const _TagBar({required this.note});
+  final Note note;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repo = ref.read(noteRepositoryProvider);
+    final allTags = ref.watch(allTagsProvider);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ...note.tags.map((t) => _TagChip(
+                label: t,
+                onRemove: () async {
+                  final next = List<String>.from(note.tags)..remove(t);
+                  await repo.setTags(note.id, next);
+                },
+              )),
+          // "+ 添加标签"按钮 + 弹出已有标签
+          ComboBox<String>(
+            placeholder: const Text('+ 标签', style: TextStyle(fontSize: 11)),
+            isExpanded: false,
+            items: [
+              ...allTags
+                  .where((t) => !note.tags.contains(t))
+                  .map((t) => ComboBoxItem<String>(
+                        value: t,
+                        child: Text('#$t'),
+                      )),
+              const ComboBoxItem<String>(
+                value: '__new__',
+                child: Text('＋ 新建标签…'),
+              ),
+            ],
+            onChanged: (value) async {
+              if (value == null) return;
+              if (value == '__new__') {
+                final newTag = await _promptNewTag(context);
+                if (newTag != null && newTag.isNotEmpty) {
+                  final next = List<String>.from(note.tags)..add(newTag);
+                  await repo.setTags(note.id, next);
+                }
+              } else {
+                final next = List<String>.from(note.tags)..add(value);
+                await repo.setTags(note.id, next);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _promptNewTag(BuildContext context) async {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (_) => ContentDialog(
+        title: const Text('新建标签'),
+        content: TextBox(controller: ctrl, placeholder: '标签名称'),
+        actions: [
+          Button(
+              child: const Text('取消'),
+              onPressed: () => Navigator.pop(context)),
+          FilledButton(
+            child: const Text('添加'),
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TagChip extends StatelessWidget {
+  const _TagChip({required this.label, required this.onRemove});
+  final String label;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 3, 4, 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey[60]),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('#$label',
+              style:
+                  const TextStyle(fontSize: 11, color: Colors.black)),
+          const SizedBox(width: 2),
+          GestureDetector(
+            onTap: onRemove,
+            child: const Icon(FluentIcons.chrome_close,
+                size: 9, color: Color(0xFF666666)),
+          ),
+        ],
       ),
     );
   }

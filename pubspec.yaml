@@ -34,6 +34,12 @@ dependencies:
   tray_manager: ^0.2.3
   # 备选：system_tray: ^2.0.3 (依赖原生编译, tray_manager 更稳定)
 
+  # ---- 多窗口（便签分离独立桌面窗口）----
+  desktop_multi_window: ^0.2.0
+
+  # ---- 屏幕信息（贴边隐藏需要屏幕边界）----
+  screen_retriever: ^0.2.0
+
   # ---- 工具类 ----
   uuid: ^4.4.0
   intl: ^0.20.2

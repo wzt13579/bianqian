@@ -10,12 +10,15 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| 多便签管理 | 列表 + 编辑器双栏，置顶/搜索/软删除 |
+| 多便签管理 | 三栏：导航 / 列表 / 编辑器，置顶/搜索/软删除 |
+| **便签分离独立窗口** | 列表悬停 → "分离" 按钮，独立桌面窗口（`desktop_multi_window`） |
+| **贴边隐藏** | 拖到屏幕顶/左/右边缘自动收起为 6px 细条，鼠标悬停恢复 |
+| **分类系统** | 标签（Tags）：导航栏分组、编辑器内 Chips、重命名/删除 |
+| **回收站** | 软删除→回收站；可恢复 / 永久删除 / 一键清空 |
 | 富文本工具栏 | Markdown：加粗、斜体、列表、待办勾选框 |
 | 本地存储 | Hive NoSQL，写入 `ApplicationSupportDirectory` |
-| 分类系统 | 数据模型预留 `tags` 字段（UI 待第二阶段） |
 | 无边框窗口 | `window_manager` + 自定义标题栏 |
-| 始终置顶 | 一键切换 |
+| 始终置顶 | 主窗口与每个分离窗口独立切换 |
 | 窗口透明度 | 标题栏滑杆 0.4–1.0 |
 | 系统托盘 | `tray_manager`，右键菜单 / 关闭隐藏 |
 | 快捷键 | `Ctrl+S` 保存（自动保存）、`Ctrl+N` 新建 |
@@ -24,25 +27,30 @@
 
 ```
 lib/
-├── main.dart                # 入口：初始化 Hive / 窗口 / 托盘
-├── models/                  # 数据模型层
-│   ├── note.dart            # Note 实体
-│   └── note_adapter.dart    # 手写 Hive TypeAdapter
-├── services/                # 服务层（基础设施）
-│   ├── storage_service.dart # Hive 初始化与 Box 管理
-│   ├── note_repository.dart # 便签数据访问 (Repository)
-│   ├── window_service.dart  # 窗口管理 (置顶/透明度/隐藏)
-│   └── tray_service.dart    # 系统托盘
+├── main.dart                       # 入口：路由 主窗口 / 子窗口
+├── models/                         # 数据模型层
+│   ├── note.dart                   # Note 实体
+│   └── note_adapter.dart           # 手写 Hive TypeAdapter
+├── services/                       # 服务层（基础设施）
+│   ├── storage_service.dart        # Hive 初始化与 Box 管理
+│   ├── note_repository.dart        # 便签数据访问 + 标签 + 回收站
+│   ├── window_service.dart         # 窗口管理 (置顶/透明度/隐藏)
+│   ├── multi_window_service.dart   # 便签分离独立窗口
+│   ├── edge_hide_service.dart      # 贴边隐藏（吸附 + 恢复）
+│   └── tray_service.dart           # 系统托盘
 ├── providers/
-│   └── providers.dart       # Riverpod Providers (DI + 状态)
+│   └── providers.dart              # Riverpod Providers (DI + 状态 + 导航)
 ├── theme/
-│   └── app_theme.dart       # Fluent 主题 + 便签配色
-├── views/                   # 视图层
-│   ├── home_view.dart       # 主面板 (列表 + 编辑器)
-│   └── note_editor_view.dart
-└── widgets/                 # 可复用组件
+│   └── app_theme.dart              # Fluent 主题 + 便签配色
+├── views/                          # 视图层
+│   ├── home_view.dart              # 主面板 (3 栏)
+│   ├── note_editor_view.dart       # 编辑器 + 标签条
+│   ├── trash_view.dart             # 回收站只读详情
+│   └── detached_note_window.dart   # 独立桌面窗口 App 根
+└── widgets/                        # 可复用组件
     ├── custom_title_bar.dart
-    └── note_card.dart
+    ├── edge_hide_overlay.dart      # 贴边状态下 UI 感应层
+    └── note_card.dart              # 列表卡片（含分离按钮）
 ```
 
 ## 🚀 运行
@@ -78,20 +86,46 @@ flutter run -d windows
 
 ## 🔭 后续阶段（Roadmap）
 
-- [ ] 「便签分离」—— 将单条便签拉成独立桌面窗口（multi_window 方案）
-- [ ] 贴边隐藏（窗口靠近屏幕边缘自动收起为侧边条）
-- [ ] 提醒事件 + 系统通知
-- [ ] 分类/标签 UI 与回收站
-- [ ] 拖拽排序
+- [x] 「便签分离」—— 独立桌面窗口
+- [x] 贴边隐藏（吸附 + 鼠标悬停恢复）
+- [x] 标签分类 / 回收站
+- [ ] 提醒事件 + 系统通知（基于 `reminderTime`）
+- [ ] 拖拽排序（`ReorderableListView`）
 - [ ] 数据导入导出（JSON / Markdown）
 - [ ] 暗色主题切换 UI
+- [ ] Markdown 实时渲染预览
 
 ## 🧰 关键依赖版本
 
 ```yaml
-fluent_ui: ^4.9.2          # Fluent Design 组件
-flutter_riverpod: ^2.5.1   # 状态管理
-hive: ^2.2.3               # 本地 NoSQL
-window_manager: ^0.4.2     # 桌面窗口
-tray_manager: ^0.2.3       # 系统托盘
+fluent_ui: ^4.9.2              # Fluent Design 组件
+flutter_riverpod: ^2.5.1       # 状态管理
+hive: ^2.2.3                   # 本地 NoSQL
+window_manager: ^0.4.2         # 桌面窗口
+tray_manager: ^0.2.3           # 系统托盘
+desktop_multi_window: ^0.2.0   # 便签分离独立窗口
+screen_retriever: ^0.2.0       # 贴边隐藏需要屏幕尺寸
 ```
+
+## 💡 关键实现细节
+
+### 便签分离独立窗口
+- 主进程通过 `DesktopMultiWindow.createWindow(jsonArgs)` 启动子窗口；
+  `main()` 接收 `args = ['multi_window', windowId, jsonArgs]` 进入子窗口模式。
+- 子窗口与主窗口共享同一 Hive Box（同进程），Riverpod 是子窗口独立 Container。
+- 子窗口标题栏的拖拽 / 最大化 / 置顶通过本进程的 `windowManager` 单例完成
+  （在子 FlutterEngine 中会绑定到子窗口的原生句柄）。
+- "收回主面板" 按钮通过 `DesktopMultiWindow.invokeMethod(0, 'reattach', ...)`
+  通知主窗口重置 `note.isDetached = false`。
+
+### 贴边隐藏（EdgeHideService）
+1. 监听 `WindowListener.onWindowMoved` / `onWindowResize`。
+2. 取主显示器尺寸，判断窗口是否进入 `snapThreshold(6px)` 边缘。
+3. 命中后保存原 `Rect`，把窗口缩成 6px 细条贴边，并强制置顶。
+4. UI 层 `EdgeHideOverlay` 监听 `hiddenSideStream`，当处于隐藏态时
+   渲染一个全窗口 `MouseRegion`，鼠标进入即调用 `restore()` 恢复原 Rect。
+
+### 标签 + 回收站
+- 标签是 `Note.tags: List<String>` 上的虚拟分组，所有 CRUD 通过
+  `NoteRepository` 的 `setTags / renameTag / deleteTag` 实现。
+- 回收站 = `Note.isDeleted = true` 的过滤集合；编辑器禁用，仅展示恢复 / 永久删除。

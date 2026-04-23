@@ -44,6 +44,13 @@ dependencies:
   uuid: ^4.4.0
   intl: ^0.20.2
 
+  # ---- 数据导入/导出 ----
+  file_picker: ^8.1.2
+  share_plus: ^10.0.2
+
+  # ---- Markdown 实时预览 ----
+  flutter_markdown: ^0.7.4+1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

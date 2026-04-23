@@ -18,16 +18,23 @@ class NoteRepository {
   /// 监听 box 变化，便于 Riverpod StreamProvider。
   Stream<BoxEvent> watch() => _box.watch();
 
-  /// 获取所有未删除便签，按 (置顶优先, 更新时间倒序) 排序。
+  /// 获取所有未删除便签：
+  /// 1. 置顶分组优先；
+  /// 2. 同分组内按 [Note.sortIndex] 升序（拖拽决定）；
+  /// 3. sortIndex 相同则回退到 updateTime 倒序。
   List<Note> getAll({bool includeDeleted = false}) {
     final notes = _box.values
         .where((n) => includeDeleted || !n.isDeleted)
         .toList();
-    notes.sort((a, b) {
-      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
-      return b.updateTime.compareTo(a.updateTime);
-    });
+    notes.sort(_compare);
     return notes;
+  }
+
+  int _compare(Note a, Note b) {
+    if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+    final s = a.sortIndex.compareTo(b.sortIndex);
+    if (s != 0) return s;
+    return b.updateTime.compareTo(a.updateTime);
   }
 
   Note? getById(String id) {
@@ -51,6 +58,11 @@ class NoteRepository {
     int color = 0xFFFFF8DC,
   }) async {
     final now = DateTime.now();
+    // 新便签放在列表最前：取当前最小 sortIndex - 1
+    final minSort = _box.values
+        .where((n) => !n.isDeleted)
+        .map((n) => n.sortIndex)
+        .fold<int>(0, (a, b) => a < b ? a : b);
     final note = Note(
       id: _uuid.v4(),
       title: title,
@@ -58,6 +70,7 @@ class NoteRepository {
       color: color,
       createTime: now,
       updateTime: now,
+      sortIndex: minSort - 1,
     );
     await _box.put(note.id, note);
     return note;
@@ -88,6 +101,26 @@ class NoteRepository {
     note.isPinned = !note.isPinned;
     note.updateTime = DateTime.now();
     await _box.put(id, note);
+  }
+
+  /// 直接写入一条已有 id 的 Note —— 用于导入场景。
+  Future<void> upsertRaw(Note note) async {
+    await _box.put(note.id, note);
+  }
+
+  /// 拖拽排序：把列表中的某条便签从 [oldIndex] 移到 [newIndex]，
+  /// 然后重排所有 sortIndex（间隔 10 留余）。
+  /// [orderedIds] 是 UI 拖拽完成后的最终 id 顺序。
+  Future<void> reorder(List<String> orderedIds) async {
+    int seed = 0;
+    for (final id in orderedIds) {
+      final note = _box.get(id);
+      if (note == null) continue;
+      note.sortIndex = seed;
+      // 这里不更新 updateTime —— 排序不算"修改"
+      await _box.put(id, note);
+      seed += 10;
+    }
   }
 
   // ====== 回收站 ======
@@ -133,10 +166,7 @@ class NoteRepository {
     final notes = _box.values
         .where((n) => !n.isDeleted && n.tags.contains(tag))
         .toList();
-    notes.sort((a, b) {
-      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
-      return b.updateTime.compareTo(a.updateTime);
-    });
+    notes.sort(_compare);
     return notes;
   }
 

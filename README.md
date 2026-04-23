@@ -11,6 +11,9 @@
 | 模块 | 说明 |
 | --- | --- |
 | 多便签管理 | 三栏：导航 / 列表 / 编辑器，置顶/搜索/软删除 |
+| **拖拽排序** | 列表项整行拖拽（`ReorderableListView`），按 `sortIndex` 持久化 |
+| **数据导入/导出** | 全量 JSON 打包导出/导入；单条便签 Markdown 文件导出 |
+| **Markdown 实时预览** | 编辑 / 预览 / 分屏 三种视图模式（`flutter_markdown`） |
 | **便签分离独立窗口** | 列表悬停 → "分离" 按钮，独立桌面窗口（`desktop_multi_window`） |
 | **贴边隐藏** | 拖到屏幕顶/左/右边缘自动收起为 6px 细条，鼠标悬停恢复 |
 | **分类系统** | 标签（Tags）：导航栏分组、编辑器内 Chips、重命名/删除 |
@@ -74,9 +77,13 @@ start ms-settings:developers
 flutter pub get
 ```
 
-### 3. 准备托盘图标
+### 3. 图标资源（已内置）
 
-把任意 ICO 文件放到 `assets/icons/tray.ico`（Windows 平台必需，缺失时不会崩溃但托盘图标为空）。可以从 [icoconvert.com](https://icoconvert.com/) 在线生成。
+- `assets/icons/tray.ico` —— 系统托盘图标
+- `assets/icons/app_icon.png` —— App Logo
+- `windows/runner/resources/app_icon.ico` —— Windows 任务栏 / exe 图标
+
+> 已使用项目自带的 `favicon.ico` 与 `bianqian.png`。替换它们后请运行 `flutter clean` 让 Windows 资源重新生成。
 
 ### 4. 运行
 
@@ -89,11 +96,13 @@ flutter run -d windows
 - [x] 「便签分离」—— 独立桌面窗口
 - [x] 贴边隐藏（吸附 + 鼠标悬停恢复）
 - [x] 标签分类 / 回收站
+- [x] 拖拽排序（`ReorderableListView`）
+- [x] 数据导入导出（JSON / Markdown）
+- [x] Markdown 实时渲染预览
 - [ ] 提醒事件 + 系统通知（基于 `reminderTime`）
-- [ ] 拖拽排序（`ReorderableListView`）
-- [ ] 数据导入导出（JSON / Markdown）
 - [ ] 暗色主题切换 UI
-- [ ] Markdown 实时渲染预览
+- [ ] 在便签中插入图片 / 附件
+- [ ] 多设备同步（WebDAV / 自建后端）
 
 ## 🧰 关键依赖版本
 

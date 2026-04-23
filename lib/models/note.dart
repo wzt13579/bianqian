@@ -34,6 +34,10 @@ class Note extends HiveObject {
   /// 是否分离为独立桌面窗口。
   bool isDetached;
 
+  /// 拖拽排序索引（数值越小越靠前；新便签默认取当前最大值 +1）。
+  /// 仅作用于"全部便签"视图的同 isPinned 分组内。
+  int sortIndex;
+
   Note({
     required this.id,
     this.title = '',
@@ -46,6 +50,7 @@ class Note extends HiveObject {
     List<String>? tags,
     this.isDeleted = false,
     this.isDetached = false,
+    this.sortIndex = 0,
   }) : tags = tags ?? <String>[];
 
   Note copyWith({
@@ -58,6 +63,7 @@ class Note extends HiveObject {
     List<String>? tags,
     bool? isDeleted,
     bool? isDetached,
+    int? sortIndex,
   }) {
     return Note(
       id: id,
@@ -71,6 +77,39 @@ class Note extends HiveObject {
       tags: tags ?? List<String>.from(this.tags),
       isDeleted: isDeleted ?? this.isDeleted,
       isDetached: isDetached ?? this.isDetached,
+      sortIndex: sortIndex ?? this.sortIndex,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'content': content,
+        'color': color,
+        'isPinned': isPinned,
+        'reminderTime': reminderTime?.toIso8601String(),
+        'createTime': createTime.toIso8601String(),
+        'updateTime': updateTime.toIso8601String(),
+        'tags': tags,
+        'isDeleted': isDeleted,
+        'isDetached': isDetached,
+        'sortIndex': sortIndex,
+      };
+
+  factory Note.fromJson(Map<String, dynamic> j) => Note(
+        id: j['id'] as String,
+        title: (j['title'] as String?) ?? '',
+        content: (j['content'] as String?) ?? '',
+        color: (j['color'] as int?) ?? 0xFFFFF8DC,
+        isPinned: (j['isPinned'] as bool?) ?? false,
+        reminderTime: j['reminderTime'] == null
+            ? null
+            : DateTime.parse(j['reminderTime'] as String),
+        createTime: DateTime.parse(j['createTime'] as String),
+        updateTime: DateTime.parse(j['updateTime'] as String),
+        tags: (j['tags'] as List?)?.cast<String>() ?? <String>[],
+        isDeleted: (j['isDeleted'] as bool?) ?? false,
+        isDetached: (j['isDetached'] as bool?) ?? false,
+        sortIndex: (j['sortIndex'] as int?) ?? 0,
+      );
 }

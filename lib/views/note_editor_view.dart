@@ -1,9 +1,11 @@
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/note.dart';
 import '../providers/providers.dart';
+import '../services/import_export_service.dart';
 import '../theme/app_theme.dart';
 
 /// 便签编辑器（标题 + Markdown 内容 + 工具栏）。
@@ -113,31 +115,58 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
               ),
               _TagBar(note: note),
               const SizedBox(height: 8),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: TextBox(
-                    controller: _bodyCtrl,
-                    maxLines: null,
-                    expands: true,
-                    placeholder: '在这里输入内容…  支持 Markdown：**加粗**  - 列表  - [ ] 待办',
-                    unfocusedColor: Colors.transparent,
-                    decoration: const WidgetStatePropertyAll(BoxDecoration()),
-                    textAlignVertical: TextAlignVertical.top,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xDE000000),
-                      height: 1.5,
-                    ),
-                    onChanged: (_) => _save(),
-                  ),
-                ),
-              ),
+              Expanded(child: _buildBody(ref)),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildBody(WidgetRef ref) {
+    final mode = ref.watch(editorModeProvider);
+    final editor = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: TextBox(
+        controller: _bodyCtrl,
+        maxLines: null,
+        expands: true,
+        placeholder: '在这里输入内容…  支持 Markdown：**加粗**  - 列表  - [ ] 待办',
+        unfocusedColor: Colors.transparent,
+        decoration: const WidgetStatePropertyAll(BoxDecoration()),
+        textAlignVertical: TextAlignVertical.top,
+        style: const TextStyle(
+          fontSize: 14,
+          color: Color(0xDE000000),
+          height: 1.5,
+        ),
+        onChanged: (_) {
+          _save();
+          // 触发预览刷新
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+
+    final preview = _MarkdownPreview(text: _bodyCtrl.text);
+
+    switch (mode) {
+      case EditorMode.edit:
+        return editor;
+      case EditorMode.preview:
+        return preview;
+      case EditorMode.split:
+        return Row(
+          children: [
+            Expanded(child: editor),
+            const SizedBox(
+              width: 1,
+              child: Divider(direction: Axis.vertical),
+            ),
+            Expanded(child: preview),
+          ],
+        );
+    }
   }
 
   Widget _buildToolbar(Note note) {
@@ -184,9 +213,38 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
             ),
           ),
           const Spacer(),
-          IconButton(
-            icon: const Icon(FluentIcons.save, size: 14),
-            onPressed: _save,
+          // 视图模式切换
+          _ModeSwitcher(),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: '导出为 Markdown',
+            child: IconButton(
+              icon: const Icon(FluentIcons.share, size: 14),
+              onPressed: () async {
+                final p = await ImportExportService.instance
+                    .exportNoteMarkdown(note);
+                if (!mounted || p == null) return;
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => ContentDialog(
+                    title: const Text('已导出'),
+                    content: Text(p),
+                    actions: [
+                      FilledButton(
+                          child: const Text('确定'),
+                          onPressed: () => Navigator.pop(context)),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          Tooltip(
+            message: '保存 (Ctrl+S)',
+            child: IconButton(
+              icon: const Icon(FluentIcons.save, size: 14),
+              onPressed: _save,
+            ),
           ),
         ],
       ),
@@ -199,6 +257,122 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
     _titleCtrl.dispose();
     _bodyCtrl.dispose();
     super.dispose();
+  }
+}
+
+/// 视图模式切换按钮组（编辑 / 预览 / 分屏）。
+class _ModeSwitcher extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(editorModeProvider);
+    final theme = FluentTheme.of(context);
+
+    Widget btn(EditorMode m, IconData icon, String tip) {
+      final selected = mode == m;
+      return Tooltip(
+        message: tip,
+        child: SizedBox(
+          width: 28,
+          height: 24,
+          child: HoverButton(
+            onPressed: () =>
+                ref.read(editorModeProvider.notifier).state = m,
+            builder: (_, states) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: selected
+                      ? theme.accentColor.withValues(alpha: 0.18)
+                      : (states.isHovered
+                          ? theme.resources.subtleFillColorSecondary
+                          : Colors.transparent),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Icon(
+                  icon,
+                  size: 13,
+                  color: selected ? theme.accentColor : null,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey[40]),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          btn(EditorMode.edit, FluentIcons.edit, '编辑'),
+          btn(EditorMode.split, FluentIcons.column_options, '分屏'),
+          btn(EditorMode.preview, FluentIcons.preview, '预览'),
+        ],
+      ),
+    );
+  }
+}
+
+/// Markdown 渲染区域。
+class _MarkdownPreview extends StatelessWidget {
+  const _MarkdownPreview({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    if (text.trim().isEmpty) {
+      return const Center(
+        child: Text('（暂无内容）',
+            style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
+      );
+    }
+    return Markdown(
+      data: text,
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      selectable: true,
+      shrinkWrap: false,
+      styleSheet: MarkdownStyleSheet(
+        p: const TextStyle(fontSize: 14, color: Colors.black, height: 1.55),
+        h1: const TextStyle(
+            fontSize: 22, fontWeight: FontWeight.w800, color: Colors.black),
+        h2: const TextStyle(
+            fontSize: 18, fontWeight: FontWeight.w700, color: Colors.black),
+        h3: const TextStyle(
+            fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black),
+        listBullet: const TextStyle(fontSize: 14, color: Colors.black),
+        code: TextStyle(
+          fontFamily: 'Consolas',
+          fontSize: 13,
+          backgroundColor: Colors.black.withValues(alpha: 0.06),
+          color: Colors.black,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        blockquoteDecoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.04),
+          border: Border(
+            left: BorderSide(color: Colors.grey[80], width: 3),
+          ),
+        ),
+        checkbox: const TextStyle(color: Colors.black),
+      ),
+      checkboxBuilder: (checked) => Padding(
+        padding: const EdgeInsets.only(right: 4, top: 2),
+        child: Icon(
+          checked
+              ? FluentIcons.checkbox_composite
+              : FluentIcons.checkbox,
+          size: 14,
+          color: Colors.black,
+        ),
+      ),
+    );
   }
 }
 

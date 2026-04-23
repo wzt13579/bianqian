@@ -27,13 +27,15 @@ class NoteAdapter extends TypeAdapter<Note> {
       tags: (fields[8] as List?)?.cast<String>() ?? <String>[],
       isDeleted: (fields[9] as bool?) ?? false,
       isDetached: (fields[10] as bool?) ?? false,
+      // 字段 11 在老版本数据中可能不存在，这里安全默认为 0
+      sortIndex: (fields[11] as int?) ?? 0,
     );
   }
 
   @override
   void write(BinaryWriter writer, Note obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -55,7 +57,9 @@ class NoteAdapter extends TypeAdapter<Note> {
       ..writeByte(9)
       ..write(obj.isDeleted)
       ..writeByte(10)
-      ..write(obj.isDetached);
+      ..write(obj.isDetached)
+      ..writeByte(11)
+      ..write(obj.sortIndex);
   }
 
   @override

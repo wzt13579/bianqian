@@ -1,7 +1,10 @@
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart'
+    show Material, MaterialType, ReorderableListView;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
+import '../services/import_export_service.dart';
 import '../widgets/custom_title_bar.dart';
 import '../widgets/edge_hide_overlay.dart';
 import '../widgets/note_card.dart';
@@ -100,7 +103,60 @@ class _SideNav extends ConsumerWidget {
           onTap: () => ref.read(navSelectionProvider.notifier).state =
               NavSelection.trash,
         ),
+        const Divider(),
+        _SectionHeader(title: '数据'),
+        _NavItem(
+          icon: FluentIcons.cloud_upload,
+          label: '导出全部 (JSON)',
+          onTap: () => _exportAll(context, ref),
+        ),
+        _NavItem(
+          icon: FluentIcons.cloud_download,
+          label: '从 JSON 导入',
+          onTap: () => _importJson(context, ref),
+        ),
       ],
+    );
+  }
+
+  Future<void> _exportAll(BuildContext context, WidgetRef ref) async {
+    final repo = ref.read(noteRepositoryProvider);
+    try {
+      final path = await ImportExportService.instance.exportAllJson(repo);
+      if (path == null) return;
+      if (!context.mounted) return;
+      _toast(context, '已导出到：\n$path');
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, '导出失败：$e', error: true);
+    }
+  }
+
+  Future<void> _importJson(BuildContext context, WidgetRef ref) async {
+    final repo = ref.read(noteRepositoryProvider);
+    try {
+      final res = await ImportExportService.instance.importJson(repo);
+      if (res == null) return;
+      if (!context.mounted) return;
+      _toast(context, '导入成功：新增 ${res.added}、覆盖 ${res.updated}');
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, '导入失败：$e', error: true);
+    }
+  }
+
+  void _toast(BuildContext context, String msg, {bool error = false}) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => ContentDialog(
+        title: Text(error ? '错误' : '提示'),
+        content: Text(msg),
+        actions: [
+          FilledButton(
+              child: const Text('确定'),
+              onPressed: () => Navigator.pop(context)),
+        ],
+      ),
     );
   }
 
@@ -371,36 +427,53 @@ class _NoteListPanelState extends ConsumerState<_NoteListPanel> {
                     style: const TextStyle(color: Color(0xFF888888)),
                   ),
                 )
-              : ListView.builder(
+              : Material(
+                  type: MaterialType.transparency,
+                  child: ReorderableListView.builder(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   itemCount: notes.length,
+                  // 回收站禁止拖拽排序
+                  buildDefaultDragHandles: !isTrash,
+                  onReorder: (oldIndex, newIndex) async {
+                    if (isTrash) return;
+                    if (newIndex > oldIndex) newIndex -= 1;
+                    final ids = notes.map((n) => n.id).toList();
+                    final moved = ids.removeAt(oldIndex);
+                    ids.insert(newIndex, moved);
+                    await repo.reorder(ids);
+                  },
+                  proxyDecorator: (child, _, anim) => child,
                   itemBuilder: (context, i) {
                     final note = notes[i];
-                    return NoteCard(
-                      note: note,
-                      selected: note.id == selectedId,
-                      onTap: () => ref
-                          .read(selectedNoteIdProvider.notifier)
-                          .state = note.id,
-                      onTogglePin: () => repo.togglePin(note.id),
-                      onDelete: () async {
-                        if (isTrash) {
-                          await repo.hardDelete(note.id);
-                        } else {
-                          await repo.softDelete(note.id);
-                        }
-                        if (selectedId == note.id) {
-                          ref.read(selectedNoteIdProvider.notifier).state =
-                              null;
-                        }
-                      },
-                      onDetach: isTrash
-                          ? null
-                          : () => ref
-                              .read(multiWindowServiceProvider)
-                              .detachNote(note, repo),
+                    return KeyedSubtree(
+                      key: ValueKey(note.id),
+                      child: NoteCard(
+                        note: note,
+                        selected: note.id == selectedId,
+                        onTap: () => ref
+                            .read(selectedNoteIdProvider.notifier)
+                            .state = note.id,
+                        onTogglePin: () => repo.togglePin(note.id),
+                        onDelete: () async {
+                          if (isTrash) {
+                            await repo.hardDelete(note.id);
+                          } else {
+                            await repo.softDelete(note.id);
+                          }
+                          if (selectedId == note.id) {
+                            ref.read(selectedNoteIdProvider.notifier).state =
+                                null;
+                          }
+                        },
+                        onDetach: isTrash
+                            ? null
+                            : () => ref
+                                .read(multiWindowServiceProvider)
+                                .detachNote(note, repo),
+                      ),
                     );
                   },
+                  ),
                 ),
         ),
       ],

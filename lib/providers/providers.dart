@@ -56,6 +56,12 @@ final alwaysOnTopProvider = StateProvider<bool>((ref) => false);
 final navSelectionProvider =
     StateProvider<NavSelection>((ref) => NavSelection.all);
 
+/// 编辑器视图模式：编辑 / 预览 / 分屏。
+enum EditorMode { edit, preview, split }
+
+final editorModeProvider =
+    StateProvider<EditorMode>((ref) => EditorMode.edit);
+
 // =====================  数据流 Provider  =====================
 
 /// 监听 Hive Box 变化的"版本号"，每次变化 +1，用于触发 [filteredNotesProvider]。

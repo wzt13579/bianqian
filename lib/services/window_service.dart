@@ -15,6 +15,12 @@ class WindowService {
   bool get _isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
+  /// 主窗口最大尺寸（与初始尺寸相同；禁止最大化 / 全屏）。
+  /// 之所以加上限是因为贴边隐藏依赖于"窗口靠近屏幕边缘"的相对位置，
+  /// 一旦窗口被最大化或全屏，就无法判定边缘行为。
+  static const Size _maxWindowSize = Size(1040, 650);
+  static const Size _minWindowSize = Size(320, 420);
+
   /// App 启动初始化窗口。请在 `runApp` 之前调用。
   Future<void> ensureInitialized() async {
     if (!_isDesktop) return;
@@ -22,8 +28,9 @@ class WindowService {
     await windowManager.ensureInitialized();
 
     const options = WindowOptions(
-      size: Size(420, 640),
-      minimumSize: Size(320, 420),
+      size: _maxWindowSize,
+      minimumSize: _minWindowSize,
+      maximumSize: _maxWindowSize,
       center: true,
       backgroundColor: Color(0x00000000),
       skipTaskbar: false,
@@ -33,6 +40,15 @@ class WindowService {
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
+      // 双保险：再显式约束一次最大尺寸，并禁用最大化按钮 / 全屏。
+      await windowManager.setMinimumSize(_minWindowSize);
+      await windowManager.setMaximumSize(_maxWindowSize);
+      try {
+        await windowManager.setMaximizable(false);
+      } catch (_) {/* 旧版 window_manager 没有该方法，忽略 */}
+      await windowManager.setFullScreen(false);
+      await windowManager.setResizable(true);
+
       await windowManager.show();
       await windowManager.focus();
       // 阻止系统直接关闭，统一交由我们处理（最小化到托盘）。

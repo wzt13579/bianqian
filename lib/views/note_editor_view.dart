@@ -170,7 +170,8 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
   }
 
   Widget _buildToolbar(Note note) {
-    return Padding(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
@@ -212,7 +213,7 @@ class _NoteEditorViewState extends ConsumerState<NoteEditorView> {
               ),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 16),
           // 视图模式切换
           _ModeSwitcher(),
           const SizedBox(width: 4),

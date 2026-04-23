@@ -20,9 +20,25 @@ class MultiWindowService {
   final Map<String, int> _detachedWindows = <String, int>{};
 
   /// 在主窗口中调用：注册子窗口的回调通道。
+  ///
+  /// 子窗口通过 [DesktopMultiWindow.invokeMethod(0, ...)] 调用以下方法：
+  /// - `fetchNote`：args = noteId(String)，返回 jsonEncode(Note) 或 null
+  /// - `saveNote`：args = jsonEncode(Note)，upsert 到 Hive
+  /// - `reattach`：args = {noteId}，清除分离状态
   void registerMethodHandler(NoteRepository repo) {
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       switch (call.method) {
+        case 'fetchNote':
+          final id = call.arguments as String;
+          final note = repo.getById(id);
+          return note == null ? null : jsonEncode(note.toJson());
+
+        case 'saveNote':
+          final j = jsonDecode(call.arguments as String) as Map<String, dynamic>;
+          final note = Note.fromJson(j);
+          await repo.upsertRaw(note);
+          return true;
+
         case 'reattach':
           final args = jsonDecode(call.arguments as String) as Map;
           final noteId = args['noteId'] as String;
@@ -33,6 +49,7 @@ class MultiWindowService {
             await repo.update(note);
           }
           return true;
+
         case 'closed':
           final args = jsonDecode(call.arguments as String) as Map;
           final noteId = args['noteId'] as String;
@@ -52,15 +69,20 @@ class MultiWindowService {
       return;
     }
 
+    // 子窗口标题分两步：
+    //   1) 先设一个唯一标识（包含 noteId），子窗口启动后通过 FindWindow 找到
+    //      自己的 HWND 修改样式 / 设置图标；
+    //   2) 子窗口稳定后再把标题改为可读的"便签 - xxx"。
+    final uniqueTag = '__BIANQIAN_SUBWIN_${note.id}__';
     final args = jsonEncode({
       'mode': 'detached_note',
       'noteId': note.id,
+      'uniqueTag': uniqueTag,
     });
 
     final window = await DesktopMultiWindow.createWindow(args);
     await window.setFrame(const Rect.fromLTWH(120, 120, 360, 480));
-    await window.setTitle(
-        '便签 - ${note.title.isEmpty ? "(无标题)" : note.title}');
+    await window.setTitle(uniqueTag);
     await window.show();
 
     _detachedWindows[note.id] = window.windowId;

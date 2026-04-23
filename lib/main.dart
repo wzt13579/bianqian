@@ -30,11 +30,13 @@ Future<void> main(List<String> args) async {
         ? jsonDecode(args[2]) as Map<String, dynamic>
         : <String, dynamic>{};
 
-    // 子窗口同样需要 Hive（同进程共享）。
-    await StorageService.instance.init();
-    // 子窗口也初始化 window_manager —— 它会绑定到当前 FlutterView 的窗口句柄。
-    await windowManager.ensureInitialized();
-    await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+    // ⚠️ 子窗口里千万不要：
+    //   1) 调用 StorageService.init() —— Hive 文件锁会和主 isolate 冲突
+    //   2) 调用 windowManager.ensureInitialized() —— window_manager 的
+    //      native 端是进程单例，从子 isolate 调用会路由到主窗口的句柄，
+    //      甚至阻塞子 isolate（从而 runApp 都不会执行 → 子窗口空白）。
+    //
+    // 子窗口需要的窗口控制走 win32 ffi（NativeWindow），数据走 IPC（RemoteNoteService）。
 
     final mode = argument['mode'] as String?;
     if (mode == 'detached_note') {
@@ -122,12 +124,16 @@ class _AppShellState extends ConsumerState<_AppShell> with WindowListener {
     }
   }
 
-  /// 窗口移动 / 改变大小时，由 EdgeHideService 处理贴边逻辑。
+  /// 窗口拖动结束时再判定贴边（避免拖动过程中频繁误判）。
   @override
   void onWindowMoved() => EdgeHideService.instance.onWindowMoved();
 
   @override
-  void onWindowResize() => EdgeHideService.instance.onWindowMoved();
+  void onWindowResized() => EdgeHideService.instance.onWindowMoved();
+
+  /// 取消置顶 / 失焦后窗口可能被拖离边缘 —— 也重新判定一次。
+  @override
+  void onWindowFocus() => EdgeHideService.instance.onWindowMoved();
 
   @override
   Widget build(BuildContext context) => const HomeView();

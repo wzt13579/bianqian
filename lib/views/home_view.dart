@@ -436,7 +436,12 @@ class _NoteListPanelState extends ConsumerState<_NoteListPanel> {
                   buildDefaultDragHandles: !isTrash,
                   onReorder: (oldIndex, newIndex) async {
                     if (isTrash) return;
+                    if (notes.length < 2) return;
                     if (newIndex > oldIndex) newIndex -= 1;
+                    if (oldIndex < 0 || oldIndex >= notes.length) return;
+                    if (newIndex < 0) newIndex = 0;
+                    if (newIndex >= notes.length) newIndex = notes.length - 1;
+                    if (oldIndex == newIndex) return;
                     final ids = notes.map((n) => n.id).toList();
                     final moved = ids.removeAt(oldIndex);
                     ids.insert(newIndex, moved);

@@ -23,13 +23,7 @@ class CustomTitleBar extends ConsumerWidget {
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onPanStart: (_) => windowManager.startDragging(),
-              onDoubleTap: () async {
-                if (await windowManager.isMaximized()) {
-                  await windowManager.unmaximize();
-                } else {
-                  await windowManager.maximize();
-                }
-              },
+              // 不允许通过双击最大化（窗口已被锁定为 1040x650）。
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
